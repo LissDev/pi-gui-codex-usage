@@ -1,17 +1,45 @@
 {
   "name": "pi-gui-codex-usage",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "displayName": "Codex Usage",
-  "description": "Codex subscription limits and server usage analytics in Pi's native extension dock.",
+  "description": "Compact Codex quotas and a graphical usage report in vanilla pi-gui.",
   "license": "MIT",
-  "repository": { "type": "git", "url": "https://github.com/LissDev/pi-gui-codex-usage.git" },
-  "keywords": ["pi-package", "pi-extension", "codex", "usage"],
-  "files": ["index.js", "README.md", "LICENSE"],
-  "pi": { "extensions": ["./index.js"] },
-  "peerDependencies": { "@earendil-works/pi-coding-agent": "*" },
-  "peerDependenciesMeta": { "@earendil-works/pi-coding-agent": { "optional": true } },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/LissDev/pi-gui-codex-usage.git"
+  },
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "codex",
+    "usage"
+  ],
+  "files": [
+    "index.js",
+    "dist",
+    "vendor",
+    "THIRD_PARTY_NOTICES.md",
+    "README.md",
+    "LICENSE"
+  ],
+  "pi": {
+    "extensions": [
+      "./index.js"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    }
+  },
   "scripts": {
     "test": "node --test --test-isolation=none test/*.test.js"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.2"
   }
 }

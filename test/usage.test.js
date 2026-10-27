@@ -1,139 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
-
-const root = new URL('../', import.meta.url);
-const secret = 'TEST_ONLY_SECRET_NEVER_RENDER';
-const endpoint = 'https://chatgpt.com/backend-api/wham/usage';
-const analyticsEndpoint = 'https://chatgpt.com/backend-api/wham/profiles/me';
-const timestamp = Date.parse('2026-10-27T17:00:00Z');
-const usage = {
-  plan_type: 'plus',
-  rate_limit: {
-    primary_window: { used_percent: 25, limit_window_seconds: 604800, reset_at: 1793725200 },
-    secondary_window: { used_percent: 40, limit_window_seconds: 18000, reset_at: 1793120400 },
-  },
-  credits: { has_credits: true, unlimited: false, balance: '12.50' },
-  rate_limit_reset_credits: { available_count: 2, applicable_available_count: 0 },
-};
-
-const analytics = {
-  profile: { username: 'PRIVATE_PROFILE_NAME', profile_picture_url: 'PRIVATE_PROFILE_URL' },
-  stats: { lifetime_tokens: 123456, peak_daily_tokens: 9876, current_streak_days: 4,
-    longest_streak_days: 8, total_threads: 42, longest_running_turn_sec: 300,
-    fast_mode_usage_percentage: 12.5, total_skills_used: 9, unique_skills_used: 3,
-    most_used_reasoning_effort: 'high', most_used_reasoning_effort_percentage: 75,
-    daily_usage_buckets: [{ start_date: '2026-10-26', tokens: 3456 }],
-    cumulative_daily_usage_buckets: [{ start_date: '2026-10-26', tokens: 123456 }],
-    weekly_usage_buckets: [{ start_date: '2026-10-19', tokens: 45678 }],
-    workspace_rank: null, workspace_total_user_count: null },
-  metadata: { stats_as_of: '2026-10-27T16:00:00Z', generated_at: '2026-10-27T16:01:00Z', stats_error: null },
-};
-
-async function loadExtension() {
-  const manifest = JSON.parse(await readFile(new URL('package.json', root), 'utf8'));
-  assert.ok(Array.isArray(manifest.pi?.extensions) && manifest.pi.extensions.length > 0,
-    'An installable Pi package must declare its extension entry in pi.extensions');
-  let module;
-  try {
-    module = await import(new URL(manifest.pi.extensions[0], root));
-  } catch (error) {
-    assert.fail(`Declared usage extension must load: ${error.code ?? error.name}`);
-  }
-  assert.equal(typeof module.default, 'function', 'Pi extension must export a default registration function');
-  return module.default;
-}
-
-function response(body = usage, status = 200) {
-  return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
-}
-
-async function harness(options = {}) {
-  const commands = new Map();
-  const events = new Map();
-  const entries = [];
-  const requests = [];
-  const widgets = [];
-  const statuses = [];
-  const timers = new Map();
-  let branch = [];
-  let session = 'session-a';
-  let nextTimer = 0;
-  const pi = {
-    registerCommand: (name, command) => commands.set(name, command),
-    on: (name, callback) => { events.set(name, callback); return () => events.delete(name); },
-    appendEntry: (customType, data) => {
-      const entry = { type: 'custom', customType, data };
-      entries.push(entry);
-      branch.push(entry);
-    },
-  };
-  const ctx = {
-    model: { provider: 'openai-codex', id: 'gpt-5.4', baseUrl: 'https://chatgpt.com/backend-api' },
-    modelRegistry: {
-      isUsingOAuth: () => options.oauth ?? true,
-      getProvider: () => ({ id: 'openai-codex', baseUrl: options.baseUrl ?? 'https://chatgpt.com/backend-api' }),
-      getProviderAuth: async (provider) => {
-        assert.equal(provider, 'openai-codex', 'Use Pi Codex auth, never another provider');
-        if (options.getAuth) return options.getAuth(provider);
-        if (options.authError) throw options.authError;
-        return options.auth === null ? undefined : options.auth ?? {
-          source: 'OAuth',
-          auth: { apiKey: secret, headers: { 'ChatGPT-Account-Id': 'test-account' } },
-        };
-      },
-    },
-    sessionManager: {
-      getSessionId: () => session,
-      getSessionFile: () => `${session}.jsonl`,
-      getLeafId: () => 'leaf',
-      getBranch: () => branch,
-      getEntries: () => branch,
-    },
-    hasUI: true,
-    ui: {
-      notify: () => {},
-      setStatus: (key, text) => statuses.push({ key, text }),
-      setWidget: (key, lines, options) => widgets.push({ key, lines, options }),
-    },
-  };
-  const services = {
-    now: () => options.now ?? timestamp,
-    ...(options.requestTimeoutMs == null ? {} : { requestTimeoutMs: options.requestTimeoutMs }),
-    setInterval: (callback, ms) => { timers.set(++nextTimer, { callback, ms }); return nextTimer; },
-    clearInterval: (id) => timers.delete(id),
-    fetch: async (url, init) => {
-      requests.push({ url: String(url), init });
-      const usageCount = requests.filter(r => r.url === endpoint).length;
-      return options.fetch ? options.fetch(url, init, usageCount) : response(String(url) === analyticsEndpoint ? analytics : usage);
-    },
-  };
-  const extension = await loadExtension();
-  await extension(pi, services);
-  const fire = async (name, event = {}) => {
-    assert.ok(events.has(name), `Extension handles ${name}`);
-    await events.get(name)({ type: name, ...event }, ctx);
-  };
-  const command = async (args = '') => commands.get('usage')?.handler(args, ctx);
-  const cardText = () => (widgets.at(-1)?.lines ?? []).join('\n');
-  const output = () => JSON.stringify({ entries, widgets, statuses });
-  return { ctx, commands, entries, requests, usageRequests: () => requests.filter(r => r.url === endpoint),
-    timers, fire, command, widgets, statuses, cardText, output,
-    restore: (saved, id = session) => { branch = [...saved]; session = id; },
-  };
-}
+import { harness, loadExtension, response, usage, analytics, secret, endpoint, analyticsEndpoint, timestamp } from './helpers.js';
 
 test('Pi package discovers a loadable default extension', async () => {
   await loadExtension();
 });
 
 
-test('/usage command is registered through the public extension API', async () => {
+test('/codex-usage command is registered through the public extension API', async () => {
   const h = await harness();
-  assert.ok(h.commands.has('usage'), 'Extension registers /usage');
+  assert.ok(h.commands.has('codex-usage'), 'Extension registers /codex-usage');
 });
 
-test('new chat stays hidden without polling; /usage renders ExtensionDock and polls', async () => {
+test('new chat stays hidden without polling; /codex-usage renders ExtensionDock and polls', async () => {
   const h = await harness();
   await h.fire('session_start', { reason: 'startup' });
   assert.equal(h.requests.length, 0);
@@ -153,7 +32,7 @@ test('new chat stays hidden without polling; /usage renders ExtensionDock and po
 test('quota card labels actual window durations, remaining usage, reset, plan and credits', async () => {
   const h = await harness();
   await h.command();
-  const text = h.cardText();
+  const text = h.reportText();
   assert.match(text, /7\s*days?|weekly|1\s*week/i);
   assert.match(text, /5\s*(hours?|h)\b/i);
   assert.match(text, /25\s*%/);
@@ -168,7 +47,7 @@ test('quota card labels actual window durations, remaining usage, reset, plan an
 test('earned resets show available and applicable counts without mutation actions', async () => {
   const h = await harness();
   await h.command();
-  const text = h.cardText();
+  const text = h.reportText();
   assert.match(text, /reset[^\n]*2|2[^\n]*reset/i);
   assert.match(text, /applicable[^\n]*0|0[^\n]*applicable/i);
   assert.ok(h.requests.every(r => !r.init.method || r.init.method === 'GET'), 'Display-only requests');
@@ -177,10 +56,13 @@ test('earned resets show available and applicable counts without mutation action
 test('server analytics shows token totals, dated buckets and useful stats without profile PII', async () => {
   const h = await harness();
   await h.command();
-  const text = h.cardText().replaceAll(',', '');
-  for (const value of ['123456', '9876', '3456', '45678', '2026-10-26', '2026-10-19']) {
+  const text = h.reportText().replaceAll(',', '');
+  for (const value of ['123456', '9876']) {
     assert.ok(text.includes(value), `Server statistic ${value} appears without inference`);
   }
+  assert.deepEqual(h.snapshot().analytics.daily, [{ date: '2026-10-26', tokens: 3456 }]);
+  assert.deepEqual(h.snapshot().analytics.cumulative, [{ date: '2026-10-26', tokens: 123456 }]);
+  assert.deepEqual(h.snapshot().analytics.weekly, [{ date: '2026-10-19', tokens: 45678 }]);
   assert.match(text, /streak/i);
   assert.match(text, /thread/i);
   assert.match(text, /skill/i);
@@ -192,8 +74,8 @@ test('server analytics shows token totals, dated buckets and useful stats withou
 test('analytics failure remains independent from successful limits', async () => {
   const h = await harness({ fetch: url => String(url) === endpoint ? response() : response({ error: secret }, 503) });
   await h.command();
-  assert.match(h.cardText(), /25\s*%/);
-  assert.match(h.cardText(), /analytics[^\n]*(unavailable|failed)|(unavailable|failed)[^\n]*analytics/i);
+  assert.match(h.reportText(), /25\s*%/);
+  assert.match(h.reportText(), /analytics[^\n]*(unavailable|failed)|(unavailable|failed)[^\n]*analytics/i);
   assert.ok(!h.output().includes(secret));
 });
 
@@ -204,7 +86,7 @@ test('null quota and credits are unavailable while explicit zero usage stays zer
   body.credits.balance = null;
   const h = await harness({ fetch: () => response(body) });
   await h.command();
-  const lines = h.cardText().split('\n');
+  const lines = h.reportText().split('\n');
   assert.ok(lines.some(line => /7\s*days?|week/i.test(line) && /unavailable|unknown|n\/a/i.test(line)), 'Weekly null usage is unavailable');
   assert.ok(lines.some(line => /5\s*(hours?|h)\b/i.test(line) && /0\s*%/.test(line)), 'Explicit zero is displayed');
   assert.ok(lines.some(line => /credit/i.test(line) && /unavailable|unknown|n\/a/i.test(line)), 'Null credits unavailable');
@@ -234,7 +116,7 @@ for (const [name, options] of [
     const h = await harness(options);
     await h.command();
     assert.equal(h.requests.length, 0);
-    assert.match(h.cardText(), /unavailable|sign in|auth|official/i);
+    assert.match(h.compactText(), /unavailable|sign in|auth|official/i);
     assert.ok(!h.output().includes(secret));
   });
 }
@@ -244,13 +126,13 @@ test('failed refresh preserves last good values, timestamp and sanitized stale s
   await h.command();
   assert.equal(h.timers.size, 1, 'Visible usage schedules refresh');
   await [...h.timers.values()][0].callback();
-  assert.match(h.cardText(), /25\s*%/);
-  assert.match(h.cardText(), /stale|last successful|last updated/i);
-  assert.match(h.cardText(), /2026|17:00/);
+  assert.match(h.reportText(), /25\s*%/);
+  assert.match(h.reportText(), /stale|last successful|last updated/i);
+  assert.match(h.reportText(), /2026|17:00/);
   assert.ok(!h.output().includes(secret));
 });
 
-test('/usage hide persists hidden, clears dock and prevents late response restoring it', async () => {
+test('/codex-usage hide persists hidden, clears dock and prevents late response restoring it', async () => {
   let resolveFetch;
   const pending = new Promise(resolve => { resolveFetch = resolve; });
   const h = await harness({ fetch: url => String(url) === endpoint ? pending : response(analytics) });
@@ -341,7 +223,7 @@ test('complete limits include review windows, credit buckets, model availability
   body.promo = null;
   const h = await harness({ fetch: url => response(String(url) === endpoint ? body : analytics) });
   await h.command();
-  const text = h.cardText().toLowerCase();
+  const text = h.reportText().toLowerCase();
   for (const metric of ['code review', '13%', '87%', '789', '4321', 'overage',
     'local', '17', '19', 'cloud', '23', '29', 'gpt-test-model', 'credits would enable',
     'spend', 'individual limit', 'limit reached', 'additional', 'promo']) {
@@ -360,12 +242,21 @@ test('complete analytics retains every scalar, all bucket dates, safe metadata a
     skill_id: 'OPAQUE_SKILL_ID', skill_name: 'Test Skill', usage_count: 37 }];
   const h = await harness({ fetch: url => response(String(url) === endpoint ? usage : body) });
   await h.command();
-  const text = h.cardText().replaceAll(',', '').toLowerCase();
+  const text = h.reportText().replaceAll(',', '').toLowerCase();
   for (const metric of ['longest running turn', 'unique skills', 'workspace rank', 'longest streak',
-    'most used reasoning effort percentage', '2026-10-27', '2468', '125924', '8024',
+    'most used reasoning effort percentage',
     'stats as of', 'generated at', '2026-10-27', 'test plugin', 'test skill', '37']) {
     assert.ok(text.includes(metric), `Available analytics metric ${metric} appears`);
   }
+  assert.deepEqual(h.snapshot().analytics.daily, [
+    { date: '2026-10-26', tokens: 3456 }, { date: '2026-10-27', tokens: 2468 },
+  ]);
+  assert.deepEqual(h.snapshot().analytics.cumulative, [
+    { date: '2026-10-26', tokens: 123456 }, { date: '2026-10-27', tokens: 125924 },
+  ]);
+  assert.deepEqual(h.snapshot().analytics.weekly, [
+    { date: '2026-10-19', tokens: 45678 }, { date: '2026-10-26', tokens: 8024 },
+  ]);
   assert.match(text, /workspace rank[^\n]*(unavailable|unknown|n\/a)/);
   assert.ok(!h.output().includes('PRIVATE_PROFILE'));
   assert.ok(!h.output().includes('OPAQUE_'), 'Opaque invocation IDs are omitted');
@@ -385,7 +276,7 @@ for (const failed of ['limits', 'analytics']) {
     await h.command();
     cycle++;
     await poll(h);
-    const text = h.cardText().replaceAll(',', '');
+    const text = h.reportText().replaceAll(',', '');
     assert.match(text, failed === 'limits' ? /25\s*%/ : /123456/);
     assert.match(text, failed === 'limits' ? /654321/ : /31\s*%/);
     assert.match(text, /stale|last successful|last updated/i);
@@ -398,8 +289,8 @@ for (const failure of ['throws', 'times out']) {
     const options = { requestTimeoutMs: 20 };
     const h = await harness(options);
     await h.command();
-    assert.match(h.cardText(), /25\s*%/);
-    assert.match(h.cardText(), /123[,.]?456/);
+    assert.match(h.reportText(), /25\s*%/);
+    assert.match(h.reportText(), /123[,.]?456/);
     const before = h.requests.length;
     options.auth = { source: 'OAuth', auth: { apiKey: 'OTHER_TEST_SECRET', headers: { 'ChatGPT-Account-Id': 'other-test-account' } } };
     const auth = deferred();
@@ -408,8 +299,8 @@ for (const failure of ['throws', 'times out']) {
     try { await poll(h); }
     finally { auth.resolve(undefined); }
     assert.equal(h.requests.length, before, 'Unverified identity does not dispatch HTTP');
-    assert.match(h.cardText(), /auth[^\n]*unavailable|sign in/i);
-    assert.doesNotMatch(h.cardText(), /25\s*%|123[,.]?456/,
+    assert.match(h.compactText(), /auth[^\n]*unavailable|sign in/i);
+    assert.doesNotMatch(h.reportText(), /25\s*%|123[,.]?456/,
       'Failed identity verification suppresses the previous account data');
     assert.doesNotMatch(h.statuses.at(-1)?.text ?? '', /updated/i);
     assert.ok(!h.output().includes(secret));
@@ -424,7 +315,7 @@ for (const failed of ['limits', 'analytics']) {
     await h.command();
     const title = failed === 'limits' ? 'Limits' : 'Analytics';
     const oldTimestamp = new Date(timestamp).toLocaleString();
-    assert.ok(h.cardText().split('\n').find(line => line.startsWith(`${title}:`))?.includes(oldTimestamp));
+    assert.ok(h.reportText().split('\n').find(line => line.startsWith(`${title}:`))?.includes(oldTimestamp));
     options.auth = { source: 'OAuth', auth: { apiKey: 'ROTATED_TEST_SECRET', headers: { 'ChatGPT-Account-Id': 'test-account' } } };
     options.now = timestamp + 86400000;
     options.fetch = url => {
@@ -436,11 +327,11 @@ for (const failed of ['limits', 'analytics']) {
       return response(body);
     };
     await poll(h);
-    const text = h.cardText().replaceAll(',', '');
+    const text = h.reportText().replaceAll(',', '');
     assert.match(text, failed === 'limits' ? /25\s*%/ : /123456/,
       'OAuth access-token rotation must not invalidate the same account cache');
     assert.match(text, failed === 'limits' ? /654321/ : /31\s*%/);
-    const failedHeader = h.cardText().split('\n').find(line => line.startsWith(`${title}:`)) ?? '';
+    const failedHeader = h.reportText().split('\n').find(line => line.startsWith(`${title}:`)) ?? '';
     assert.match(failedHeader, /stale|last successful|last updated/i);
     assert.ok(failedHeader.includes(oldTimestamp), 'Failed source retains its original successful timestamp');
     assert.ok(!h.output().includes('ROTATED_TEST_SECRET'));
@@ -455,8 +346,8 @@ test('missing verified account identity suppresses previous metrics and prevents
   options.auth = { source: 'OAuth', auth: { apiKey: 'TOKEN_WITHOUT_ACCOUNT_ID', headers: {} } };
   await poll(h);
   assert.equal(h.requests.length, before, 'Unknown account cannot dispatch account-scoped requests');
-  assert.doesNotMatch(h.cardText(), /25\s*%|123[,.]?456/);
-  assert.match(h.cardText(), /account|auth|unavailable/i);
+  assert.doesNotMatch(h.reportText(), /25\s*%|123[,.]?456/);
+  assert.match(h.reportText(), /account|auth|unavailable/i);
   assert.ok(!h.output().includes('TOKEN_WITHOUT_ACCOUNT_ID'));
 });
 
@@ -467,8 +358,8 @@ test('runtime OAuth account switch never serves the prior account cache', async 
   options.auth = { source: 'OAuth', auth: { apiKey: 'OTHER_TEST_SECRET', headers: { 'ChatGPT-Account-Id': 'other-test-account' } } };
   options.fetch = () => response({ error: 'unavailable' }, 503);
   await poll(h);
-  assert.doesNotMatch(h.cardText(), /25\s*%|123[,.]?456/);
-  assert.match(h.cardText(), /unavailable/i);
+  assert.doesNotMatch(h.reportText(), /25\s*%|123[,.]?456/);
+  assert.match(h.reportText(), /unavailable/i);
   assert.ok(!h.output().includes('OTHER_TEST_SECRET'));
   assert.ok(!h.output().includes('other-test-account'));
 });
@@ -477,8 +368,8 @@ test('account switch clears visible foreign metrics before new account requests 
   const options = {};
   const h = await harness(options);
   await h.command();
-  assert.match(h.cardText(), /25\s*%/);
-  assert.match(h.cardText(), /123[,.]?456/);
+  assert.match(h.reportText(), /25\s*%/);
+  assert.match(h.reportText(), /123[,.]?456/);
   const limitsRequest = deferred();
   const analyticsRequest = deferred();
   options.auth = { source: 'OAuth', auth: { apiKey: 'OTHER_TEST_SECRET', headers: { 'ChatGPT-Account-Id': 'other-test-account' } } };
@@ -491,16 +382,16 @@ test('account switch clears visible foreign metrics before new account requests 
   nextAnalytics.stats.lifetime_tokens = 654321;
   try {
     assert.equal(h.requests.length, 4, 'Both new-account requests are pending');
-    assert.doesNotMatch(h.cardText(), /25\s*%|123[,.]?456/,
+    assert.doesNotMatch(h.reportText(), /25\s*%|123[,.]?456/,
       'Foreign account metrics disappear while new-account responses are pending');
-    assert.match(h.cardText(), /loading|refreshing|unavailable/i, 'A safe loading state replaces foreign metrics');
+    assert.match(h.reportText(), /loading|refreshing|unavailable/i, 'A safe loading state replaces foreign metrics');
   } finally {
     limitsRequest.resolve(response(nextLimits));
     analyticsRequest.resolve(response(nextAnalytics));
     await refresh;
   }
-  assert.match(h.cardText(), /71\s*%/);
-  assert.match(h.cardText().replaceAll(',', ''), /654321/);
+  assert.match(h.reportText(), /71\s*%/);
+  assert.match(h.reportText().replaceAll(',', ''), /654321/);
 });
 
 for (const action of ['hide', 'new session', 'shutdown']) {
@@ -556,8 +447,8 @@ test('HTTP timeout settles refresh with stale last-good data and aborts the requ
   if (outcome !== 'settled') { finish?.(); await work; }
   assert.equal(outcome, 'settled', 'Bounded HTTP timeout completes the refresh');
   assert.ok(signal?.aborted, 'Timeout aborts request instead of abandoning it');
-  assert.match(h.cardText(), /25\s*%/);
-  assert.match(h.cardText(), /stale|last successful|last updated/i);
+  assert.match(h.reportText(), /25\s*%/);
+  assert.match(h.reportText(), /stale|last successful|last updated/i);
 });
 
 for (const [name, body] of [['empty body', {}], ['wrong body type', []],
@@ -569,9 +460,9 @@ for (const [name, body] of [['empty body', {}], ['wrong body type', []],
     await h.command();
     fail = true;
     await poll(h);
-    assert.match(h.cardText(), /25\s*%/);
-    assert.match(h.cardText(), /stale|last successful|last updated/i);
-    assert.doesNotMatch(h.cardText(), /-5\s*%|105\s*%/);
+    assert.match(h.reportText(), /25\s*%/);
+    assert.match(h.reportText(), /stale|last successful|last updated/i);
+    assert.doesNotMatch(h.reportText(), /-5\s*%|105\s*%/);
   });
 }
 
@@ -581,8 +472,8 @@ test('malformed JSON is a sanitized stale source failure', async () => {
   await h.command();
   fail = true;
   await poll(h);
-  assert.match(h.cardText(), /25\s*%/);
-  assert.match(h.cardText(), /stale|last successful|last updated/i);
+  assert.match(h.reportText(), /25\s*%/);
+  assert.match(h.reportText(), /stale|last successful|last updated/i);
   assert.ok(!h.output().includes(secret));
 });
 
@@ -604,8 +495,8 @@ test('installed SDK headerless OAuth JWT supplies the account header and usage m
     assert.equal(headers.get('authorization'), `Bearer ${token}`);
     assert.equal(request.init.redirect, 'error');
   }
-  assert.match(h.cardText(), /25\s*%/);
-  assert.match(h.cardText().replaceAll(',', ''), /123456/);
+  assert.match(h.reportText(), /25\s*%/);
+  assert.match(h.reportText().replaceAll(',', ''), /123456/);
   assert.ok(!h.output().includes(token), 'Resolved token is never persisted or rendered');
 });
 
@@ -616,8 +507,8 @@ for (const failed of ['limits', 'analytics']) {
     const options = { auth: { source: 'OAuth', auth: { apiKey: firstToken } } };
     const h = await harness(options);
     await h.command();
-    assert.match(h.cardText(), /25\s*%/, 'Headerless OAuth initially resolves the account');
-    assert.match(h.cardText().replaceAll(',', ''), /123456/);
+    assert.match(h.reportText(), /25\s*%/, 'Headerless OAuth initially resolves the account');
+    assert.match(h.reportText().replaceAll(',', ''), /123456/);
     options.auth = { source: 'OAuth', auth: { apiKey: nextToken } };
     options.fetch = url => {
       const isLimits = String(url) === endpoint;
@@ -628,11 +519,11 @@ for (const failed of ['limits', 'analytics']) {
       return response(body);
     };
     await poll(h);
-    const text = h.cardText().replaceAll(',', '');
+    const text = h.reportText().replaceAll(',', '');
     assert.match(text, failed === 'limits' ? /25\s*%/ : /123456/);
     assert.match(text, failed === 'limits' ? /654321/ : /31\s*%/);
     const title = failed === 'limits' ? 'Limits' : 'Analytics';
-    const sourceHeader = h.cardText().split('\n').find(line => line.startsWith(`${title}:`)) ?? '';
+    const sourceHeader = h.reportText().split('\n').find(line => line.startsWith(`${title}:`)) ?? '';
     assert.match(sourceHeader, /stale|last successful|last updated/i);
     assert.ok(sourceHeader.includes(new Date(timestamp).toLocaleString()));
     assert.ok(!h.output().includes(firstToken));
@@ -650,8 +541,8 @@ for (const [name, token] of [
     const h = await harness({ auth: { source: 'OAuth', auth: { apiKey: token } } });
     await h.command();
     assert.equal(h.requests.length, 0, 'Unresolvable account claim prevents dispatch');
-    assert.match(h.cardText(), /account|auth|unavailable/i);
-    assert.doesNotMatch(h.cardText(), /25\s*%|123[,.]?456/);
+    assert.match(h.reportText(), /account|auth|unavailable/i);
+    assert.doesNotMatch(h.reportText(), /25\s*%|123[,.]?456/);
     assert.ok(!h.output().includes(token));
   });
 }

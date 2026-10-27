@@ -146,3 +146,168 @@ The focused command passed again afterward. Broader regression: `npm test` —
 production owner; no behavior-change TDD exception.
 
 Stopped for independent commands, native final-plugin execution and review.
+
+## Stage 6: Compact and graphical Detailed workflows
+
+Accepted RED is `RED.md` Stage 6: seven workflow failures and three actual browser
+DOM/lifetime failures before production changed. Its full 56-test run had 55
+failures; most earlier safety cases were blocked by the command rename, not new
+independent safety defects. The confirmed scenario/destination map and sanitized
+state contract are in `REQUIREMENTS.md`. The standalone native prototype proved
+the view/Chord boundary but is not production verification.
+
+Sequential implementation checkpoints:
+
+1. Renamed to `/codex-usage`, added native chooser and direct compact/detailed/hide
+   routing. `node --test --test-isolation=none test/workflow.test.js` gave 4 pass,
+   3 fail (quota scope/bar and absent workbench declaration). `npm test` under the
+   primary account gave 20 pass, 36 fail: missing public report state and browser
+   destination were now reached after the rename prerequisite.
+2. Registered the native view and finite service, published safe structured data,
+   split quota-only compact rendering from the full report. Running
+   `node --test --test-isolation=none test/usage.test.js test/workflow.test.js`
+   gave 52 pass, 1 fail: restoring a hidden branch repainted a widget before its
+   visibility flag changed. Moved rendering after restoration of that flag.
+   Repeated command: **53 pass, 0 fail**, exit 0.
+3. Before graphical implementation,
+   `node --test --test-isolation=none test/desktop.test.js` exercised the declared
+   package frontend and still failed all three actual DOM/lifetime assertions:
+   absent Overview/Analytics tabs and polling interval. Implemented the plain
+   browser ES module/CSS with native HTML semantics, graphical quota meters,
+   three SVG histories and complete tables, keyboard tabs, finite refresh calls,
+   subscription hydration and idempotent disposal. Repeated browser command:
+   **3 pass, 0 fail**, exit 0, using headless Chrome under the primary account.
+
+Final broader command: `npm test`, primary account to launch synthetic headless
+Chrome — **56 tests, 56 pass, 0 failed/cancelled/skipped**, exit 0.
+
+Production files:
+
+- `index.js`: menu/command namespace, compact-only timer/visibility, sanitized
+  host-owned replicated report and finite refresh service, graphical data fields.
+- `dist/desktop.js`, `dist/desktop.css`, `dist/contract.js`: ready-to-load local
+  report, responsive host-theme styling and shared stable service token.
+- `vendor/register-desktop-view.js`, `dist/chord-context.js`: copied proven host
+  registration helper and Chord context module; no backend Chord state duplicate.
+- `package.json`, `package-lock.json`: version 0.2.0 and packaged local assets.
+- `README.md`, `THIRD_PARTY_NOTICES.md`: new menu/manual native entry, independent
+  compact/details lifetime, development/packaging instructions and both upstream
+  MIT notices. Existing plugin MIT license retained.
+
+No production test edits, no runtime npm dependencies, no user build step,
+no private runtime package imports, host edits or user-settings changes. No
+post-GREEN refactoring. Documentation/packaging metadata are the documented TDD
+exception; behavior followed accepted RED. JavaScript syntax checks:
+
+```powershell
+$scripts = @('index.js') + @(Get-ChildItem -LiteralPath dist, vendor -Filter *.js | ForEach-Object FullName)
+foreach ($script in $scripts) { node --check $script; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } }
+```
+
+Result: exit 0. `npm pack --dry-run --cache ../.npm-cache` exits 0 and includes
+exactly 10 files: manifest, index, README, LICENSE, THIRD_PARTY_NOTICES,
+dist/desktop.js, dist/desktop.css, dist/contract.js, dist/chord-context.js and
+vendor/register-desktop-view.js (15.0 kB packed after the final source-link doc edit).
+No archive, push or publication performed by this implementation owner.
+
+Independent native-host execution, accessibility/visual evaluation and review
+remain required. Synthetic browser success does not prove native iframe loading,
+host close/remount, current backend availability or every desktop theme.
+
+## Stage 7: fresh mount identity and same-session report lifetime
+
+Accepted reviewer findings and verified Stage 7 RED: the two fresh-mount browser
+tests exposed cached account A while current identity checking was pending;
+the same-session tree test exposed an empty account report after branch change.
+Exact command:
+
+```powershell
+node --test --test-isolation=none --test-name-pattern='fresh details mount|same-session tree' test/desktop.test.js test/workflow.test.js
+```
+
+RED: 3 selected, 3 failed, exit 1, recorded by the test designer against unchanged
+production. `dist/desktop.js` now gates initial state hydration and subscription
+replays until the first finite refresh succeeds, renders safe loading/unavailable
+feedback before that point and retains disposal guards. `index.js` preserves
+account-scoped sections on session-tree events while still cancelling obsolete
+work and restoring branch-owned compact visibility. Session starts continue to
+clear account data. Tests were not edited by the implementation owner.
+
+GREEN: repeated focused command under primary-account headless Chrome —
+**3 selected, 3 pass**, exit 0. Then `npm test` — **59 tests, 59 pass, 0 failed/
+cancelled/skipped**, exit 0, before any refactoring.
+
+The accepted slop finding was addressed only after GREEN, using the bounded
+`code-simplification` skill: removed duplicate bucket serialization from
+`analytics.lines` in `index.js` and its compensating filter in `dist/desktop.js`.
+Scalar lines, safe metadata, exact validated structured histories, charts and
+tables remain. The designer had already refined two historical tests to compare
+literal complete public series and demonstrated both passed before the cleanup.
+
+Post-refactor focused command:
+
+```powershell
+node --test --test-isolation=none --test-name-pattern='fresh details mount|same-session tree|server analytics shows|complete analytics retains' test/desktop.test.js test/workflow.test.js test/usage.test.js
+```
+
+Result: **5 selected, 5 pass**, exit 0. `npm test` again gives **59 tests, 59 pass,
+0 failed/cancelled/skipped**, exit 0. All shipped JS passed the Stage 6 syntax
+check command. `npm pack --dry-run --cache ../.npm-cache` exits 0 with the same
+10 intended assets; a final dry run after the README clarification exits 0 with
+15.1 kB packed.
+No new dependencies, host/config changes, publication or test edits. No
+behavior-change TDD exception. Production is frozen for independent rechecks and
+native final-source verification; this report is implementation evidence only.
+
+## Stage 8: explicit finite-refresh identity result
+
+Accepted reviewer finding: an empty successful RPC completion after cancelled
+auth work could unlock old cached account data. Stage 8 RED in `RED.md` records
+six selected failures, including the real public backend cancellation boundary,
+browser false/empty/undefined results, revoking a previously verified view and
+same-account stale data with an explicit verified result.
+
+```powershell
+node --test --test-isolation=none --test-name-pattern='identity gate rejects|previously verified details|details refresh cancelled|same-account source failure' test/desktop.test.js test/workflow.test.js
+```
+
+`index.js` now returns an explicit verification boolean from refresh work and
+exposes `{verified:boolean}` through the finite service. Missing session context,
+failed identity checks and invalidated generations return false. Current work
+that successfully checked official Pi OAuth and a usable account remains true
+when a data endpoint fails, allowing safe same-account stale sections.
+`dist/desktop.js` unlocks only for explicit true; unverified results and rejected
+refreshes revoke the gate, clear its snapshot and show safe unavailable feedback.
+Existing disposal guards prevent repaint after close.
+
+GREEN: exact focused command above, primary account for isolated synthetic
+Chrome — **6 selected, 6 pass**, exit 0. Broader `npm test` — **65 tests, 65 pass,
+0 failed/cancelled/skipped**, exit 0. All shipped JS passed the recorded syntax
+check loop. `npm pack --dry-run --cache ../.npm-cache` exits 0, version 0.2.0,
+same ten intended files, **15.1 kB** packed. No test edits, new dependencies,
+refactoring, publication or host/config changes; no behavior-change TDD exception.
+
+Finding accepted and addressed. Source frozen for independent rerun, reviewer
+recheck and final native verification; no overall completion claim.
+
+## Stage 9: inherit live host theme
+
+Accepted RED is the completed Stage 9 record in `RED.md`: initial dark computed
+colors pass, then an open report retains dark inline colors after the host root
+switches to light. The exact focused command was:
+
+```powershell
+node --test --test-isolation=none --test-name-pattern='open details follows host theme changes' test/desktop.test.js
+```
+
+Production change is limited to deleting the four article-level theme snapshots
+in `dist/desktop.js`. The existing CSS now inherits root background, foreground,
+accent and color-scheme, which the installed host updates on theme changes.
+No observer, fallback, remount or refresh was added. Test files were not edited.
+
+GREEN: exact focused command, primary account for isolated synthetic Chrome —
+**1 selected, 1 pass**, exit 0. Broader `npm test` — **66 tests, 66 pass,
+0 failed/cancelled/skipped**, exit 0. `node --check dist/desktop.js` exits 0.
+`npm pack --dry-run --cache ../.npm-cache` exits 0: version 0.2.0, same ten intended
+files, **15.0 kB** packed. No new refactoring or behavior-change TDD exception.
+Finding accepted and fixed; production source frozen for independent verification.

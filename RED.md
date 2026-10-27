@@ -1,5 +1,239 @@
 # RED evidence — native ExtensionDock
 
+## Stage 9: open report follows host theme changes
+
+Production frozen at 65-test GREEN. Changed only `test/browser-fixture.js`,
+`test/desktop.test.js` and this evidence. No production assets changed.
+
+Exact focused command, run under the primary account for isolated synthetic
+headless Chrome:
+
+```powershell
+node --test --test-isolation=none --test-name-pattern='open details follows host theme changes' test/desktop.test.js
+```
+
+**1 selected test, 0 pass, 1 fail, 0 cancelled/skipped, exit 1**.
+`open details follows host theme changes without remounting` passes the initial
+dark-theme computed-color assertion. The fixture then applies the host frame's
+actual theme contract: update the shared `host.theme` object and the document
+root's `--background`, `--foreground`, `--accent` and `color-scheme`. The root
+update assertion passes. The already-open report remains dark:
+
+- background `rgb(29, 29, 28)` instead of `rgb(250, 249, 245)`;
+- foreground `rgb(211, 211, 207)` instead of `rgb(35, 35, 35)`;
+- selected-tab accent `rgb(122, 162, 247)` instead of `rgb(49, 91, 168)`;
+- color scheme `dark` instead of `light`.
+
+This is real computed rendering from the registered packaged frontend, not a
+source-text assertion or a fixture/import failure. The host contract is visible
+in `D:/Workspace/3dparty/pi-gui/apps/desktop/electron/extensions/extension-frame-document.ts`
+(`applyTheme`, also called for `pi-gui:theme-changed`); the design review confirmed
+the installed pi-gui 1.0.1 frame uses the same root-variable contract. An earlier
+sandboxed attempt failed to launch Chrome with `spawn EPERM` and is excluded
+from behavioral evidence.
+
+The test requires an open report to update all three colors and color scheme
+without remount, refresh, or loss of the selected Analytics tab. The post-color
+identity/tab/call-count assertions are acceptance checks after the first observed
+failure. The fixture now initializes root variables before mount, matching the
+host frame. No fallback compatibility API, observer, helper export, or particular
+production implementation is prescribed. GREEN and broader verification remain
+with the next owner.
+
+---
+
+## Stage 8: explicit identity result across cancellation
+
+Production frozen at 59-test GREEN. Changed only browser fixture/tests, backend
+workflow tests, requirements and this evidence. No production assets changed.
+
+Exact focused command (primary account for isolated synthetic Chrome):
+
+```powershell
+node --test --test-isolation=none --test-name-pattern='identity gate rejects|previously verified details|details refresh cancelled|same-account source failure' test/desktop.test.js test/workflow.test.js
+```
+
+**6 selected tests, 0 pass, 6 fail, 0 cancelled/skipped, exit1**. No import,
+environment, fixture or runner failure. Actual observed RED:
+
+- `details refresh cancelled by compact hide reports that identity was not verified`:
+  populate account A through the public finite service while compact remains
+  hidden, defer the next auth check for B, then issue compact hide. Cancelled
+  service refresh resolves an empty result, failing **Cancelled auth work must
+  not report successful identity verification**. A rejection or explicit false
+  is required; the deferred auth fixture is always settled and cannot dispatch.
+- `details identity gate rejects false refresh result without exposing cached metrics`
+  plus `empty` and `undefined` cases: initial pending refresh correctly hides A
+  (passing precondition), but resolving without explicit verified true renders
+  A's **Used25% / Left75%**. Each fails **Only an explicit verified result can
+  unlock cached account metrics** in the actual frontend DOM.
+- `previously verified details clears metrics when a later refresh is cancelled unverified`:
+  a view initially verified by explicit true receives false on its next finite
+  refresh. A's25%/75% remain visible, failing **Cancelled identity refresh revokes
+  the previous rendering gate**.
+- `same-account source failure preserves stale data but reports verified identity`:
+  successful auth with a failing limits endpoint correctly retains25% stale
+  limits and updates analytics654321 (passing assertions). Its service result
+  lacks the new explicit verified flag (**undefined instead oftrue**). This is
+  RED for the new result contract, not a data-retention defect. Endpoint failure
+  after a valid same-account check must not be treated as auth failure.
+
+Browser success fixtures now explicitly return `{verified:true}`; deferred
+completion can independently return false/empty/undefined without modifying the
+cached snapshot. This tightens the agreed service protocol and does not relax
+any existing assertions. All deferred operations settle before assertions,
+with no hanging fixture. Later graph/table absence and safe error-feedback
+assertions remain acceptance checks after each first observed metrics failure.
+
+REQUIREMENTS.md defines finite refresh `{verified:boolean}` and frontend explicit
+true gating. Cancellation/auth failure/no context must not imply verification;
+successfully verified same-account data-source failures may show stale data.
+Existing59 tests remain; full suite was not rerun during this bounded RED phase.
+No fix was made or authorized by the test owner.
+
+---
+
+## Stage 7: fresh-mount identity gate and account report lifetime
+
+Production frozen at 56-test GREEN. Changed only `test/browser-fixture.js`,
+`test/desktop.test.js`, `test/workflow.test.js`, requirements and this evidence.
+Existing safety tests and production assets were not changed.
+
+Exact focused command (primary account for isolated headless Chrome):
+
+```powershell
+node --test --test-isolation=none --test-name-pattern='fresh details mount|same-session tree' test/desktop.test.js test/workflow.test.js
+```
+
+**3 selected tests, 0 pass, 3 fail, 0 cancelled/skipped, exit1**. Actual expected
+behavioral assertions reached, with no import, environment, fixture or runner
+errors:
+
+- `fresh details mount suppresses cached account data until identity refresh success`
+  and the corresponding `rejection` case both fail **Fresh mount must not expose
+  cached account A before current identity is verified**. The real frontend
+  immediately displays **Used25% / Left75%** from cached account A while the
+  initial finite refresh remains deferred for account B's auth check. The fixture
+  also replays A's service state through the subscription to exercise hydration
+  and live delivery. Deferred refresh is always completed/rejected in `finally`,
+  with no hanging promise. Later assertions require no old analytics charts/rows,
+  B's71%/654321 after success, or safe unavailable feedback without A after
+  rejection. These later assertions are acceptance checks, not independent RED
+  failures yet. The fake service represents only the public async boundary;
+  rendering uses the actual registered frontend in Chrome.
+- `same-session tree navigation retains the mounted report while compact is hidden`
+  establishes a report subscription, finite refresh and successful25% data, then
+  navigates the same session to a hidden branch. Public report windows become
+  empty: **undefined instead of25**. This confirms the account-scoped report is
+  cleared despite the consuming Details view and no immediate replacement.
+  Later checks retain analytics and forbid compact visibility/backend intervals.
+  No private view-mount callback or controller state is inspected.
+
+Requirement: gate cached report hydration on a fresh mount's initial identity
+check; errors must not display previous account data. Preserve/revalidate the
+account report across same-session tree navigation independently of branch-owned
+compact visibility. No implementation helper or state layout beyond the existing
+public service contract is prescribed. No production fix was made or authorized.
+Full suite was not rerun during this bounded RED phase.
+
+Stage 7 test-infrastructure follow-up: two historical analytics tests now compare
+the public `analytics.daily`, `cumulative`, and `weekly` arrays directly instead
+of requiring duplicate bucket serialization in scalar report lines. Exact dates,
+tokens, order and complete fixture series are retained through literal deep-equal
+assertions; scalar/metadata/PII and missing/null/malformed coverage is unchanged.
+No formatter or production helper was added. REQUIREMENTS.md clarifies scalar
+lines versus structured histories. This is a behavior-preserving test refinement
+for the accepted later post-GREEN duplication cleanup, not new production RED.
+
+```powershell
+node --test --test-isolation=none --test-name-pattern='server analytics shows|complete analytics retains' test/usage.test.js
+```
+
+**2 selected tests, 2 pass, exit0** against the still-unmodified production.
+
+---
+
+## Stage 6: command menu, quota-only compact and graphical right report
+
+Ready for TDD: YES. Confirmed user handoff and proven vanilla-host prototype
+`../details-prototype/HANDOFF.md` were read before tests. REQUIREMENTS.md now
+records the complete entry/destination/close/restoration/state-owner map and
+the coordinator-approved sanitized public snapshot contract. Production files
+were not edited. Baseline was the committed 46-test GREEN implementation.
+
+Exact workflow command:
+
+```powershell
+node --test --test-isolation=none test/workflow.test.js
+```
+
+**7 tests, 0 pass, 7 fail, exit1**. Genuine observed RED:
+
+1. `command namespace is kebab-case codex-usage`: new name absent.
+2. `bare command offers native Compact Detailed Hide choices; cancellation changes nothing`:
+   no native selection call, **0 instead of1**.
+3. `compact displays only quotas with used bars and exact collapsed summary`:
+   current widget still contains plan/credits/analytics, violating compact scope.
+4. `compact text bars handle zero and fully used windows`: no proportional text bar.
+5. `detailed entry leaves hidden compact hidden and gives native opening instructions`:
+   starts **1 recurring backend timer instead of0**.
+6. `detailed entry preserves shown compact state without a new visibility write`:
+   appends **2 visibility entries instead of1**.
+7. `right workbench report is registered with sanitized finite-refresh service and packaged assets`:
+   native workbench declaration absent.
+
+Display/menu tests invoke the existing registered public handler independently
+of spelling to reach real behavior before rename. The namespace assertion is
+separate; no no-op controller or production stub was introduced.
+
+Exact browser command:
+
+```powershell
+node --test --test-isolation=none test/desktop.test.js
+```
+
+Run under the primary Windows account for a separate headless Chrome process.
+**3 tests, 0 pass, 3 fail, exit1**, all actual DOM/lifetime assertions:
+
+- `graphical Overview renders real progress and preserves report semantics on state updates`:
+  Overview tab **0 instead of1**.
+- `Analytics tab shows all dated series as actual charts and tables using keyboard access`:
+  Analytics tab **0 instead of1**.
+- `details mount polls finitely; dispose and abort stop timers and release the binding`:
+  frontend polling interval **0 instead of1**.
+
+Browser launched successfully with no environment, import or fixture failures.
+Without a registration the fixture mounts nothing; it never imports a guessed
+missing module. After registration it mounts the actual declared frontend in the
+browser. Later meter/chart/table, keyboard, subscription, remount, interval and
+dispose assertions are acceptance checks pending the missing destination, not
+independently observed defects yet. No extra history-period navigation is required.
+
+Exact full command: `npm test` (includes browser suite, primary account).
+**56 tests, 1 pass, 55 fail, 0 cancelled/skipped, exit1**. No unhandled-rejection
+warnings in the final run. Most prior 46 safety checks now encounter the missing
+`/codex-usage` prerequisite; those failures do NOT establish new safety defects.
+They were mechanically migrated to explicit `compact` invocation. Full safe
+metrics now read the view's public sanitized report state; compact-specific/auth
+feedback checks remain widget-facing. Keep all prior safety requirements.
+
+Added test-only Playwright devDependency/lockfile and node_modules ignore rule;
+test infrastructure exception, zero runtime dependencies added. Browser channels
+are configurable for dev verification and no machine-specific D: path is embedded.
+Updated only requirements/evidence, test sources/harness, and test infrastructure.
+No index, frontend, vendor or other production assets changed; no push/spawn.
+
+Implementer boundary: register the proven host workbench view/service, prebuilt
+frontend mount(root,host), native bare menu and direct compact/detailed/hide;
+preserve compact visibility independently, publish only sanitized account-scoped
+report state, retain existing cancellation/auth/data guarantees. Compact has only
+quota bars/percentages/reset/update/stale, exact successful collapsed summary.
+Overview/Analytics render graphical meters and all supplied histories as charts
+and tables; frontend owns details polling/disposal, backend refresh is finite.
+Correct MIT notices must accompany redistributed helper/Chord browser code.
+
+---
+
 ## Stage 5: installed SDK headerless OAuth compatibility
 
 Production remained idle. Changed only tests, requirements and this evidence.

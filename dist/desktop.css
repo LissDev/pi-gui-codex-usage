@@ -1,0 +1,51 @@
+* { box-sizing: border-box; }
+body { margin: 0; }
+.codex-usage {
+  min-height: 100vh;
+  padding: 20px;
+  background: var(--background);
+  color: var(--foreground);
+  font: 14px/1.5 system-ui, sans-serif;
+  overflow-wrap: anywhere;
+}
+h1 { font-size: 22px; margin: 0 0 18px; }
+h2 { font-size: 17px; margin: 24px 0 12px; }
+h3 { font-size: 15px; margin: 0 0 8px; }
+p { margin: 8px 0; }
+nav { display: flex; gap: 8px; margin-bottom: 18px; }
+button {
+  min-height: 40px;
+  padding: 8px 16px;
+  border: 1px solid color-mix(in srgb, var(--foreground) 25%, transparent);
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+button[aria-selected="true"] { border-color: var(--accent); color: var(--accent); }
+button:hover { background: color-mix(in srgb, var(--foreground) 7%, transparent); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.freshness, .reset { font-size: 12px; opacity: .8; }
+.stale, .error, .connection { font-weight: 600; }
+.connection:empty { display: none; }
+.quotas { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr)); gap: 12px; }
+.quota { padding: 16px; border: 1px solid color-mix(in srgb, var(--foreground) 20%, transparent); border-radius: 8px; }
+.quota-value { font-size: 17px; font-variant-numeric: tabular-nums; }
+.track { height: 10px; border-radius: 6px; background: color-mix(in srgb, var(--foreground) 15%, transparent); overflow: hidden; margin: 12px 0; }
+.fill { height: 100%; background: var(--accent); }
+.metrics { margin: 0; }
+.metric { padding: 12px 0; border-bottom: 1px solid color-mix(in srgb, var(--foreground) 15%, transparent); }
+dt { font-size: 12px; opacity: .8; }
+dd { margin: 3px 0 0; font-variant-numeric: tabular-nums; }
+.history { margin-top: 28px; }
+svg { width: 100%; height: auto; display: block; margin: 12px 0; overflow: visible; }
+svg text { fill: var(--foreground); font: 11px system-ui, sans-serif; }
+.grid-line { stroke: color-mix(in srgb, var(--foreground) 18%, transparent); }
+.data-line { fill: none; stroke: var(--accent); stroke-width: 2; }
+.data-point { fill: var(--accent); }
+table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+caption { text-align: left; font-size: 12px; margin: 8px 0; }
+th, td { padding: 8px 4px; border-bottom: 1px solid color-mix(in srgb, var(--foreground) 15%, transparent); text-align: left; }
+th:last-child, td:last-child { text-align: right; }
+@media (max-width: 340px) { .codex-usage { padding: 12px; } button { padding: 8px 12px; } }
