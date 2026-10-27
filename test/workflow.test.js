@@ -121,7 +121,7 @@ test('same-session tree navigation retains the mounted report while compact is h
     await h.fire('session_tree', { oldLeafId: 'branch-a', newLeafId: 'branch-b' });
     assert.equal(h.snapshot().overview.windows[0]?.usedPercent, 25,
       'Account-scoped report remains available after a same-session branch change');
-    assert.match(h.snapshot().analytics.lines.join('\n').replaceAll(',', ''), /123456/);
+    assert.match(h.reportText().replaceAll(',', ''), /123456/);
     assert.equal(h.timers.size, 0, 'Hidden compact and mounted details create no backend interval');
     assert.equal(h.widgets.filter(item => item.lines).length, 0, 'Branch change does not enable compact');
   } finally { unsubscribe(); }
@@ -167,6 +167,6 @@ test('same-account source failure preserves stale data but reports verified iden
   const result = await service.refresh({}, {});
   assert.equal(h.snapshot().overview.windows[0].usedPercent, 25);
   assert.equal(h.snapshot().overview.stale, true);
-  assert.match(h.snapshot().analytics.lines.join('\n').replaceAll(',', ''), /654321/);
+  assert.match(h.reportText().replaceAll(',', ''), /654321/);
   assert.equal(result?.verified, true, 'Data-source failure does not invalidate a successfully verified account');
 });

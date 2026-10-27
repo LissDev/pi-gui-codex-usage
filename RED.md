@@ -518,3 +518,166 @@ Stage 4 TDD evidence remains five genuine pre-fix failures in this document,
 followed by five focused passes and 39 regression passes in `GREEN.md`; the
 post-cleanup full run independently confirms all 39 remain passing. This is a
 TDD evidence check only, not a security, design or native-rendering review.
+
+## Analytics display refinement — RED (2026-10-27)
+
+Scenario/destination map and typed public presentation contract were recorded in
+REQUIREMENTS.md before choosing the first regression. Ownership covered only
+REQUIREMENTS.md, this record, and test files; no production code changed.
+
+Specified behavior: omit missing field fragments/empty groups but retain real
+zero, false and error/loading/stale feedback; use accessible boolean icons;
+calendar 7/30/all filtering shared by all three histories with local today,
+absolute cumulative/weekly values and mount-local restoration; replace tables
+with keyboard/pointer heatmaps, stable full-series intensity and null gaps;
+compact/local dotted minute timestamps and MM.DD chart ticks; sanitized inline
+invocation details with nullable names and zero counts.
+
+Changed tests:
+- test/usage.test.js: revised `null quota and credit fragments are omitted while
+  explicit zero usage stays zero`, existing complete limits/analytics assertions;
+  added `refinement:` tests for typed scalar metrics, sanitized invocation rows,
+  compact omitted fragments/local timestamps, and existing missing-history/null
+  semantics (the last test passes and is not claimed as RED).
+- test/desktop.test.js: revised Analytics chart/table assertion to require
+  keyboard-accessible heatmaps; seven `refinement:` tests cover mixed fields and
+  boolean icons, empty groups/errors, calendar boundaries, period lifecycle,
+  heatmap intensity/tooltips, local dates/dense ticks and invocation detail rows.
+- test/helpers.js: report observation can read typed metrics/windows/invocations
+  while observing legacy lines before GREEN. This is test infrastructure only.
+- test/workflow.test.js: preserve branch/auth assertions via the same public
+  report observer rather than reading superseded legacy lines directly.
+
+Exact backend command (exit 1):
+`node --test --test-isolation=none --test-name-pattern="refinement:|null quota and credit|complete limits|complete analytics" test/usage.test.js`
+
+Result: 7 tests, 1 pass, 6 expected behavioral failures. Actual failures:
+null quota and complete limits still emit unavailable fragments; null workspace
+rank is still printed; public Overview lacks typed metrics; structured
+invocations are undefined; compact prints `Used unavailable · Left unavailable ·
+Reset unavailable` and old timestamp `27.10.2026, 20:00:00`.
+
+Exact Chrome command (exit 1; elevated solely for Chrome process launch):
+`node --test --test-isolation=none --test-name-pattern="refinement:|Analytics tab shows" test/desktop.test.js`
+
+Result: 8 tests, 0 pass, 8 expected behavioral failures. Actual failures:
+3 tables instead of heatmaps; unavailable mixed-field/reset fragments; 2 empty
+Overview headings; absent 30-day and 7-day controls; remaining ISO dates;
+nullable invocation placeholders. All pages mounted the actual registered
+packaged frontend without runtime/fixture errors. Fixed browser clock is
+2026-10-27 00:30 Europe/Moscow (2026-10-26 in Los Angeles), independent of real
+today. Server data remains synthetic and no real account is contacted.
+
+Valid RED: extension/service and real frontend loaded successfully; assertions
+failed on visible legacy behavior or missing public typed values, not compilation,
+syntax, fixtures or auth setup. Browser fixtures temporarily contain both typed
+metrics and legacy lines so the old renderer can demonstrate visible defects.
+Production must migrate atomically; no legacy service compatibility is required.
+Implementation constraints: retain identity gates and lifecycle assertions,
+preserve null token points, all-time stats/invocations and absolute cumulative
+values; local date-only source buckets must not shift timezone. Period controls
+have accessible button names `7 days`, `30 days`, `All`; focusable cells expose
+an accessible name beginning yyyy.mm.dd and exact-value role=tooltip content.
+Full-history colors are compared before/after filtering out the old maximum.
+No GREEN or implementation was performed by the RED owner.
+
+## History calendar-date normalization follow-up — RED (2026-10-27)
+
+Accepted correctness finding: missing/invalid source dates or descending bucket
+order can make the All heatmap bounds invalid and hide otherwise valid history.
+Public service must omit entries without real calendar dates and publish each
+of daily/cumulative/weekly chronologically; preserve source dates and exact
+counts, including zero and null gaps. Invalid entries must not discard the
+remaining valid source history.
+
+Changed only test/usage.test.js and this RED record for this follow-up. Added
+three parameterized tests named `history date normalization: <daily|cumulative|
+weekly> omits invalid calendar dates and sorts valid buckets without changing
+zero or null`. Each public-extension fixture starts with missing date,
+`not-a-date`, impossible `2026-02-30`, then valid unsorted 27th/25th/26th buckets.
+Expected public snapshot contains only sorted 25th (0), 26th (null), 27th (456).
+
+Exact command:
+`node --test --test-isolation=none --test-name-pattern="history date normalization:" test/usage.test.js`
+
+Exit 1: **3 tests, 0 pass, 3 fail**, no cancellation or skip. All three fail the
+same meaningful `deepStrictEqual`: actual series includes synthetic
+`date: 'unavailable'`, `not-a-date`, `2026-02-30` and leaves valid 27th before
+25th/26th. The source error assertion passes, proving the extension successfully
+loads and processes the fixture. Failure is date validity/order, not compilation,
+syntax, harness setup or missing service. No production edits before this run.
+
+Implementation constraint: normalize all three series at the existing sanitized
+public service boundary, before frontend bounds/filtering. Preserve valid
+calendar strings unchanged; do not convert missing dates into fake dates or
+reinterpret zero/null counts. No browser fixture bypass is needed to reproduce
+the defect. RED ownership stops here; GREEN remains unperformed by this owner.
+
+## Period focus and heatmap targets follow-up — RED (2026-10-27)
+
+Accepted UI findings: keyboard activation rebuilds period controls and loses
+focus; each exact-value heatmap button is only 12x12px. Observable requirements:
+activating 7 days/30 days/All retains focus on the equivalent selected control;
+background snapshots preserve that focus and never steal focus from report tabs;
+supplied bucket targets are at least 24x24px while their visible GitHub-style
+square may remain compact. Keyboard and touch expose exact date/count inline.
+
+Changed only test/desktop.test.js and this record for this follow-up. Three
+`interaction accessibility:` tests cover period focus/background snapshots,
+computed target geometry for Daily/Cumulative/Weekly, and keyboard plus actual
+Chrome touch tap exact-value feedback. The existing page helper accepts optional
+browser context options to enable hasTouch; it still mounts the real registered
+frontend with synthetic report state and fixed clock.
+
+Exact command (Chrome launch elevated):
+`node --test --test-isolation=none --test-name-pattern="interaction accessibility:" test/desktop.test.js`
+
+Exit 1: **3 tests, 1 pass, 2 fail**, no cancellation or skip. Behavioral RED:
+`7 days retains keyboard focus after activation` fails false versus true;
+`Daily exact-value target is 12x12px; requires at least 24x24px` fails computed
+geometry. Frontend mounted successfully; no fixture/runtime errors occurred.
+No UI production edits preceded this run.
+
+The third test PASSES before production changes: keyboard focus and a completed
+`cell.tap()` in a hasTouch Chrome context both leave a visible tooltip containing
+`2026.10.26` and exact `2000` count. Native focus already supplies touch access.
+This is existing-behavior evidence, not RED; do not manufacture a touch failure
+or require an unnecessary click handler based solely on the earlier static
+absence of onclick. Preserve this observable access while fixing the two proven
+issues. No dialog/table or enlarged visual square is required by these tests.
+RED ownership stops here; no production change was made by this owner.
+
+## Observed Electron touch sequence follow-up — RED (2026-10-27)
+
+Native evidence in work/native-analytics-final/result.json (with failure.png)
+records a real installed Electron report receiving touch emulation events on a
+fresh heatmap cell after period focus: pointerenter(pointerType=touch),
+pointerdown, touchstart, pointerup, pointerleave, touchend, with no cell focus or
+click. It reports activeCell=false and tooltipHidden=true. This supplies actual
+host evidence missing from the earlier static concern. The earlier Chrome
+hasTouch `cell.tap()` pass remains valid for Chrome's different focus behavior;
+it does not cover this observed Electron event sequence.
+
+Added ONE real-rendered-view event regression in test/desktop.test.js:
+`Electron touch sequence: exact bucket feedback survives touch completion
+without synthesized cell focus`. It dispatches that observed pointer/touch
+sequence on the registered frontend's actual Daily cell with synthetic date/count
+2026.10.26 / 2000. The harness does not synthesize cell focus or click. Expected
+visible inline exact-value feedback survives touch completion.
+
+Exact command (elevated for Chrome launch):
+`node --test --test-isolation=none --test-name-pattern="Electron touch sequence:" test/desktop.test.js`
+
+Exit 1: **1 test, 0 pass, 1 fail**, no cancellation or skip. Failure is
+`Observed Electron touch completion must leave exact-value feedback visible
+without a synthesized focus/click`: actual tooltip visibility false, expected
+true. The registered frontend and actual target cell load successfully; no
+fixture/runtime failure. No production code was edited for this RED.
+
+Scope/limits: DOM-dispatched events are untrusted and do not reproduce native
+hardware event generation or browser default focus actions. They deliberately
+exercise the view's actual handlers with the independently recorded host event
+order, avoiding Chrome's extra synthesized focus. Later GREEN needs both this
+view regression and fresh installed Electron touch verification. Preserve the
+existing keyboard/pointer tooltip behavior; no extra dialog or table is required.
+RED ownership stops here.

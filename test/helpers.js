@@ -156,7 +156,10 @@ async function harness(options = {}) {
     assert.ok(state, 'Sanitized report state is available to the registered view');
     return ['overview', 'analytics'].map(name => {
       const section = state[name];
-      return `${name === 'overview' ? 'Limits' : 'Analytics'}: ${section?.stale ? 'stale · last successful' : 'updated'} ${section?.updatedAt == null ? '' : new Date(section.updatedAt).toLocaleString()}\n${section?.error ?? ''}\n${section?.lines?.join('\n') ?? ''}`;
+      const metrics = section?.metrics?.map(metric => `${metric.label}: ${metric.value}`).join('\n') ?? section?.lines?.join('\n') ?? '';
+      const windows = section?.windows?.map(window => `${window.label}: ${window.usedPercent == null ? '' : `${window.usedPercent}% used · ${window.leftPercent}% remaining`} · reset ${window.resetAt ?? ''}`).join('\n') ?? '';
+      const invocations = section?.invocations?.map(item => Object.values(item).join(' · ')).join('\n') ?? '';
+      return `${name === 'overview' ? 'Limits' : 'Analytics'}: ${section?.stale ? 'stale · last successful' : 'updated'} ${section?.updatedAt == null ? '' : new Date(section.updatedAt).toLocaleString()}\n${section?.error ?? ''}\n${metrics}\n${windows}\n${invocations}`;
     }).join('\n');
   };
   const output = () => JSON.stringify({ entries, widgets, statuses, snapshot: snapshot() });

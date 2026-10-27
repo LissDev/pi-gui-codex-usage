@@ -8,23 +8,41 @@ function element(tag, text, className) {
   return node;
 }
 
-const amount = number => number == null ? 'unavailable' : number.toLocaleString();
-const localDate = milliseconds => milliseconds == null ? 'unavailable' : new Date(milliseconds).toLocaleString();
+const amount = number => number.toLocaleString();
+function localDate(milliseconds) {
+  const time = new Date(milliseconds);
+  const pad = number => String(number).padStart(2, '0');
+  return `${time.getFullYear()}.${pad(time.getMonth() + 1)}.${pad(time.getDate())} ${pad(time.getHours())}:${pad(time.getMinutes())}`;
+}
+const calendarDate = date => date.replaceAll('-', '.');
+const dayKey = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+
+function periodBounds(period) {
+  const today = new Date();
+  const start = new Date(today.getFullYear(), today.getMonth(), today.getDate() - period + 1);
+  return { start: dayKey(start), end: dayKey(today) };
+}
 
 function freshness(section) {
-  const note = element('p', `${section.stale ? 'Stale · last successful update' : 'Updated'}: ${localDate(section.updatedAt)}`, 'freshness');
+  if (section.updatedAt == null && !section.stale) return element('span');
+  const text = section.updatedAt == null ? 'Stale' : `${section.stale ? 'Stale · last successful update' : 'Updated'}: ${localDate(section.updatedAt)}`;
+  const note = element('p', text, 'freshness');
   if (section.stale) note.classList.add('stale');
   return note;
 }
 
-function metricList(lines) {
+function metricList(metrics) {
   const list = element('dl', null, 'metrics');
-  for (const line of lines) {
-    const separator = line.indexOf(':');
-    const name = separator < 0 ? line : line.slice(0, separator);
-    const description = separator < 0 ? '' : line.slice(separator + 1).trim();
+  for (const metric of metrics) {
     const item = element('div', null, 'metric');
-    item.append(element('dt', name.charAt(0).toUpperCase() + name.slice(1)), element('dd', description));
+    const description = element('dd');
+    if (typeof metric.value === 'boolean') {
+      const icon = element('span', metric.value ? '✓' : '✕', metric.value ? 'boolean-true' : 'boolean-false');
+      icon.setAttribute('aria-label', metric.value ? 'True' : 'False');
+      icon.setAttribute('role', 'img');
+      description.append(icon);
+    } else description.textContent = metric.format === 'datetime' ? localDate(metric.value) : amount(metric.value);
+    item.append(element('dt', metric.label.charAt(0).toUpperCase() + metric.label.slice(1)), description);
     list.append(item);
   }
   return list;
@@ -34,7 +52,10 @@ function quota(window) {
   const card = element('section', null, 'quota');
   card.append(element('h3', window.label));
   const used = window.usedPercent;
-  card.append(element('p', `Used ${used == null ? 'unavailable' : `${used}%`} · Left ${window.leftPercent == null ? 'unavailable' : `${window.leftPercent}%`}`, 'quota-value'));
+  const percentages = [];
+  if (used != null) percentages.push(`Used ${used}%`);
+  if (window.leftPercent != null) percentages.push(`Left ${window.leftPercent}%`);
+  if (percentages.length) card.append(element('p', percentages.join(' · '), 'quota-value'));
   if (used != null) {
     const track = element('div', null, 'track');
     track.setAttribute('role', 'meter');
@@ -48,21 +69,20 @@ function quota(window) {
     track.append(fill);
     card.append(track);
   }
-  card.append(element('p', `Reset: ${localDate(window.resetAt == null ? null : window.resetAt * 1000)}`, 'reset'));
+  if (window.resetAt != null) card.append(element('p', `Reset: ${localDate(window.resetAt * 1000)}`, 'reset'));
   return card;
 }
 
-function history(title, series) {
+function history(title, fullSeries, period) {
+  const bounds = period === 'all' ? null : periodBounds(period);
+  const series = bounds ? fullSeries.filter(bucket => bucket.date >= bounds.start && bucket.date <= bounds.end) : fullSeries;
   const section = element('section', null, 'history');
   section.append(element('h3', title));
-  if (!series.length) {
-    section.append(element('p', 'History unavailable', 'freshness'));
-    return section;
-  }
+  if (!series.length) return null;
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  svg.setAttribute('viewBox', '0 0 360 190');
+  svg.setAttribute('viewBox', '0 0 360 140');
   svg.setAttribute('role', 'img');
-  svg.setAttribute('aria-label', `${title} token history; exact dated values in the table below`);
+  svg.setAttribute('aria-label', `${title} token history; exact dated values in the heatmap below`);
   const shape = (tag, attributes, text) => {
     const node = document.createElementNS(svg.namespaceURI, tag);
     for (const [name, value] of Object.entries(attributes)) node.setAttribute(name, String(value));
@@ -72,7 +92,7 @@ function history(title, series) {
   };
   const max = Math.max(1, ...series.map(bucket => bucket.tokens ?? 0));
   for (const fraction of [0, .5, 1]) {
-    const y = 150 - fraction * 130;
+    const y = 108 - fraction * 92;
     shape('line', { x1: 46, x2: 348, y1: y, y2: y, class: 'grid-line' });
     shape('text', { x: 40, y: y + 4, 'text-anchor': 'end' }, Intl.NumberFormat(undefined, { notation: 'compact' }).format(max * fraction));
   }
@@ -81,32 +101,66 @@ function history(title, series) {
   series.forEach((bucket, index) => {
     if (bucket.tokens == null) { connected = false; return; }
     const x = 46 + (series.length === 1 ? 151 : index / (series.length - 1) * 302);
-    const y = 150 - bucket.tokens / max * 130;
+    const y = 108 - bucket.tokens / max * 92;
     path += `${connected ? 'L' : 'M'}${x},${y} `;
     connected = true;
     shape('circle', { cx: x, cy: y, r: series.length > 40 ? 1.5 : 3, class: 'data-point' });
   });
   shape('path', { d: path, class: 'data-line' });
-  shape('text', { x: 46, y: 176 }, series[0].date);
-  shape('text', { x: 348, y: 176, 'text-anchor': 'end' }, series.at(-1).date);
-  const table = element('table');
-  table.append(element('caption', `${title} tokens`));
-  const head = element('thead');
-  const heading = element('tr');
-  for (const name of ['Date', 'Tokens']) {
-    const cell = element('th', name);
-    cell.scope = 'col';
-    heading.append(cell);
+  for (const index of new Set([0, Math.floor((series.length - 1) / 2), series.length - 1])) {
+    const x = series.length === 1 ? 197 : 46 + index / (series.length - 1) * 302;
+    shape('text', { x, y: 132, 'text-anchor': index === 0 ? 'start' : index === series.length - 1 ? 'end' : 'middle' }, calendarDate(series[index].date).slice(5));
   }
-  head.append(heading);
-  const rows = element('tbody');
-  for (const bucket of series) {
-    const row = element('tr');
-    row.append(element('td', bucket.date), element('td', amount(bucket.tokens)));
-    rows.append(row);
+  const heatmap = element('div', null, 'heatmap');
+  const tooltip = element('div', '', 'heatmap-tooltip');
+  tooltip.id = `usage-${title.toLowerCase()}-tooltip`;
+  tooltip.setAttribute('role', 'tooltip');
+  tooltip.hidden = true;
+  const scroll = element('div', null, 'heatmap-scroll');
+  const grid = element('div', null, 'heatmap-grid');
+  grid.setAttribute('aria-label', `${title} supplied ${title === 'Weekly' ? 'week starts' : 'days'}`);
+  const buckets = new Map(series.map(bucket => [bucket.date, bucket]));
+  const maximum = Math.max(1, ...fullSeries.map(bucket => bucket.tokens ?? 0));
+  const start = new Date(`${bounds?.start ?? series[0].date}T00:00:00Z`);
+  const end = new Date(`${bounds?.end ?? series.at(-1).date}T00:00:00Z`);
+  start.setUTCDate(start.getUTCDate() - start.getUTCDay());
+  end.setUTCDate(end.getUTCDate() + 6 - end.getUTCDay());
+  for (const cursor = new Date(start); cursor <= end; cursor.setUTCDate(cursor.getUTCDate() + 1)) {
+    const key = cursor.toISOString().slice(0, 10);
+    const bucket = buckets.get(key);
+    if (bucket?.tokens == null) {
+      const gap = element('span', '', 'heatmap-gap');
+      if (bucket) gap.setAttribute('aria-label', `${calendarDate(key)} no value supplied`);
+      grid.append(gap);
+      continue;
+    }
+    const level = bucket.tokens === 0 ? 0 : Math.max(1, Math.ceil(bucket.tokens / maximum * 4));
+    const cell = element('button', '', 'heatmap-cell');
+    cell.type = 'button';
+    cell.style.setProperty('--heat-color', `var(--heat-${level})`);
+    const text = `${calendarDate(key)} · ${amount(bucket.tokens)} tokens`;
+    cell.setAttribute('aria-label', text);
+    cell.setAttribute('aria-describedby', tooltip.id);
+    const show = () => { tooltip.textContent = text; tooltip.hidden = false; };
+    const hide = () => { tooltip.hidden = true; };
+    cell.onpointerenter = show;
+    cell.onpointerleave = hide;
+    cell.ontouchend = show;
+    cell.onfocus = show;
+    cell.onblur = hide;
+    grid.append(cell);
   }
-  table.append(head, rows);
-  section.append(svg, table);
+  scroll.append(grid);
+  const legend = element('div', null, 'heatmap-legend');
+  legend.append(element('span', 'Less'));
+  for (let level = 0; level <= 4; level++) {
+    const swatch = element('span', '', 'heatmap-swatch');
+    swatch.style.backgroundColor = `var(--heat-${level})`;
+    legend.append(swatch);
+  }
+  legend.append(element('span', 'More'));
+  heatmap.append(tooltip, scroll, legend);
+  section.append(svg, heatmap);
   return section;
 }
 
@@ -138,6 +192,7 @@ export async function mount(root, host) {
   main.append(nav, connection, panel);
   root.replaceChildren(stylesheet, main);
   let selected = 0;
+  let period = 30;
   let snapshot;
   let verified = false;
   let disposed = false;
@@ -146,6 +201,7 @@ export async function mount(root, host) {
   let refreshing = false;
 
   function render() {
+    const focusedPeriod = panel.querySelector('.periods button:focus')?.textContent;
     tabs.forEach((tab, index) => {
       tab.setAttribute('aria-selected', String(selected === index));
       tab.tabIndex = selected === index ? 0 : -1;
@@ -159,14 +215,45 @@ export async function mount(root, host) {
     panel.replaceChildren(freshness(section));
     if (section.error) panel.append(element('p', section.error, 'error'));
     if (selected === 0) {
-      panel.append(element('h2', 'Subscription limits'));
-      const quotas = element('div', null, 'quotas');
-      for (const window of section.windows) quotas.append(quota(window));
-      panel.append(quotas, element('h2', 'Account and quota details'), metricList(section.lines));
+      if (section.windows.length) {
+        panel.append(element('h2', 'Subscription limits'));
+        const quotas = element('div', null, 'quotas');
+        for (const window of section.windows) quotas.append(quota(window));
+        panel.append(quotas);
+      }
+      if (section.metrics.length) panel.append(element('h2', 'Account and quota details'), metricList(section.metrics));
     } else {
-      panel.append(element('h2', 'Usage analytics'));
-      panel.append(metricList(section.lines));
-      panel.append(history('Daily', section.daily), history('Cumulative', section.cumulative), history('Weekly', section.weekly));
+      if (section.metrics.length) panel.append(element('h2', 'All-time statistics'), metricList(section.metrics));
+      if (section.invocations.length) {
+        const group = element('section', null, 'invocations');
+        group.append(element('h3', 'Top invocations · All time'));
+        const list = element('ul');
+        for (const invocation of section.invocations) {
+          list.append(element('li', [invocation.type, invocation.pluginName, invocation.skillName, invocation.usageCount].filter(item => item != null && item !== '').map(amount).join(' · ')));
+        }
+        group.append(list);
+        panel.append(group);
+      }
+      if (section.daily.length || section.cumulative.length || section.weekly.length) {
+        const controls = element('div', null, 'periods');
+        controls.setAttribute('role', 'group');
+        controls.setAttribute('aria-label', 'History period');
+        for (const [name, days] of [['7 days', 7], ['30 days', 30], ['All', 'all']]) {
+          const button = element('button', name);
+          button.type = 'button';
+          button.setAttribute('aria-pressed', String(period === days));
+          button.onclick = () => { period = days; render(); };
+          controls.append(button);
+        }
+        panel.append(controls);
+        for (const [title, series] of [['Daily', section.daily], ['Cumulative', section.cumulative], ['Weekly', section.weekly]]) {
+          const chart = history(title, series, period);
+          if (chart) panel.append(chart);
+        }
+        if (focusedPeriod) {
+          [...controls.querySelectorAll('button')].find(button => button.textContent === focusedPeriod)?.focus({ preventScroll: true });
+        }
+      }
     }
   }
 

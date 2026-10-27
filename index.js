@@ -12,7 +12,18 @@ function value(item) {
 function date(seconds) {
   if (seconds == null) return unavailable;
   if (typeof seconds !== 'number' || !Number.isFinite(seconds) || !Number.isFinite(new Date(seconds * 1000).getTime())) throw new Error('Invalid reset');
-  return new Date(seconds * 1000).toLocaleString();
+  return localDate(seconds * 1000);
+}
+function localDate(milliseconds) {
+  const time = new Date(milliseconds);
+  const pad = number => String(number).padStart(2, '0');
+  return `${time.getFullYear()}.${pad(time.getMonth() + 1)}.${pad(time.getDate())} ${pad(time.getHours())}:${pad(time.getMinutes())}`;
+}
+function addMetric(metrics, name, item, format) {
+  if (item == null) return;
+  const cleaned = typeof item === 'string' ? value(item).trim() : (value(item), item);
+  if (cleaned === '') return;
+  metrics.push({ label: name, value: cleaned, ...(format ? { format } : {}) });
 }
 
 function duration(seconds) {
@@ -22,71 +33,102 @@ function duration(seconds) {
   return seconds > 0 ? `${seconds} seconds` : 'window';
 }
 
-function rateLines(title, rate, windows) {
-  if (rate == null) return [`${title}: ${unavailable}`];
+function rateMetrics(title, rate, windows, metrics) {
+  if (rate == null) return;
   if (!object(rate)) throw new Error('Invalid limits');
-  const lines = [`${title} · allowed: ${value(rate.allowed)} · limit reached: ${value(rate.limit_reached)}`];
+  addMetric(metrics, `${title} allowed`, rate.allowed);
+  addMetric(metrics, `${title} limit reached`, rate.limit_reached);
   for (const name of ['primary_window', 'secondary_window']) {
     const window = rate[name];
-    if (window == null) { lines.push(`${label(name)}: ${unavailable}`); continue; }
+    if (window == null) continue;
     if (!object(window)) throw new Error('Invalid window');
     const used = window?.used_percent;
     if (used != null && (typeof used !== 'number' || !Number.isFinite(used) || used < 0 || used > 100)) throw new Error('Invalid percentage');
     if (window.limit_window_seconds != null && (typeof window.limit_window_seconds !== 'number' || !Number.isFinite(window.limit_window_seconds) || window.limit_window_seconds <= 0)) throw new Error('Invalid duration');
-    lines.push(`${duration(window.limit_window_seconds)}: ${used == null ? unavailable : `${used}% used · ${100 - used}% remaining`} · resets ${date(window.reset_at)} · reset after seconds: ${value(window.reset_after_seconds)}`);
+    if (window.reset_at != null) date(window.reset_at);
+    addMetric(metrics, `${title} ${duration(window.limit_window_seconds)} reset after seconds`, window.reset_after_seconds);
+    if ([used, window.limit_window_seconds, window.reset_at].every(item => item == null)) continue;
     windows.push({ label: `${title === 'Included limits' ? '' : `${title} · `}${duration(window.limit_window_seconds)}`, usedPercent: used ?? null, leftPercent: used == null ? null : 100 - used, resetAt: window.reset_at ?? null });
   }
-  return lines;
 }
 
 function limitsReport(body) {
   if (!object(body) || !Object.hasOwn(body, 'rate_limit')) throw new Error('Invalid usage');
   const windows = [];
-  const lines = [`Plan: ${value(body.plan_type)}`, ...rateLines('Included limits', body.rate_limit, windows), ...rateLines('Code review limits', body.code_review_rate_limit, windows)];
-  if (body.additional_rate_limits == null) lines.push(`Additional limits: ${unavailable}`);
-  else {
+  const metrics = [];
+  addMetric(metrics, 'Plan', body.plan_type);
+  rateMetrics('Included limits', body.rate_limit, windows, metrics);
+  rateMetrics('Code review limits', body.code_review_rate_limit, windows, metrics);
+  if (body.additional_rate_limits != null) {
     if (!Array.isArray(body.additional_rate_limits)) throw new Error('Invalid additional limits');
     for (const extra of body.additional_rate_limits) {
-      lines.push(...rateLines(`Additional ${value(extra.limit_name)} · ${value(extra.metered_feature)}`, extra.rate_limit, windows));
+      const name = [extra.limit_name, extra.metered_feature].filter(item => item != null && item !== '').map(value).join(' · ');
+      rateMetrics(`Additional limits${name ? ` · ${name}` : ''}`, extra.rate_limit, windows, metrics);
     }
   }
-  lines.push(`Credits: ${value(body.credits?.balance)} · unlimited: ${value(body.credits?.unlimited)} · available: ${value(body.credits?.has_credits)} · overage limit reached: ${value(body.credits?.overage_limit_reached)}`);
+  addMetric(metrics, 'Credits', body.credits?.balance);
+  addMetric(metrics, 'Credits unlimited', body.credits?.unlimited);
+  addMetric(metrics, 'Credits available', body.credits?.has_credits);
+  addMetric(metrics, 'Credits overage limit reached', body.credits?.overage_limit_reached);
   for (const field of ['approx_local_messages', 'approx_cloud_messages']) {
     const messages = body.credits?.[field];
     if (messages != null && !Array.isArray(messages)) throw new Error('Invalid credits');
-    lines.push(`Credits ${label(field)}: ${messages?.map(value).join(' – ') ?? unavailable}`);
+    addMetric(metrics, `Credits ${label(field)}`, messages?.filter(item => item != null).map(value).join(' – '));
   }
   for (const [model, usage] of Object.entries(body.model_usage ?? {})) {
-    lines.push(`${value(model)} · available: ${value(usage?.available)} · available at: ${date(usage?.available_at)} · credits would enable: ${value(usage?.credits_would_enable)}`);
+    addMetric(metrics, `${value(model)} available`, usage?.available);
+    if (usage?.available_at != null) {
+      date(usage.available_at);
+      addMetric(metrics, `${value(model)} available at`, usage.available_at * 1000, 'datetime');
+    }
+    addMetric(metrics, `${value(model)} credits would enable`, usage?.credits_would_enable);
   }
-  lines.push(`Spend control reached: ${value(body.spend_control?.reached)}`);
+  addMetric(metrics, 'Spend control reached', body.spend_control?.reached);
   const spend = body.spend_control?.individual_limit;
-  lines.push(`Spend individual limit: ${spend == null ? unavailable : ['source', 'limit', 'used', 'remaining', 'used_percent'].map(field => `${label(field)}: ${value(spend[field])}`).join(' · ')}`);
-  lines.push(`Rate limit reached type: ${value(body.rate_limit_reached_type)}`);
-  lines.push(`Promo: ${value(body.promo)}`);
-  lines.push(`Earned resets: ${value(body.rate_limit_reset_credits?.available_count)} · applicable: ${value(body.rate_limit_reset_credits?.applicable_available_count)}`);
-  return { lines, windows };
+  for (const field of ['source', 'limit', 'used', 'remaining', 'used_percent']) addMetric(metrics, `Spend individual limit ${label(field)}`, spend?.[field]);
+  addMetric(metrics, 'Rate limit reached type', body.rate_limit_reached_type);
+  addMetric(metrics, 'Promo', body.promo);
+  addMetric(metrics, 'Earned resets', body.rate_limit_reset_credits?.available_count);
+  addMetric(metrics, 'Applicable earned resets', body.rate_limit_reset_credits?.applicable_available_count);
+  return { metrics, windows };
 }
 
 function analyticsReport(body) {
   if (!object(body) || !object(body.stats) || body.metadata?.stats_error != null) throw new Error('Invalid analytics');
-  const lines = [];
+  const metrics = [];
   const fields = ['lifetime_tokens', 'peak_daily_tokens', 'current_streak_days', 'longest_streak_days', 'total_threads', 'longest_running_turn_sec', 'fast_mode_usage_percentage', 'total_skills_used', 'unique_skills_used', 'most_used_reasoning_effort', 'most_used_reasoning_effort_percentage', 'workspace_rank', 'workspace_total_user_count'];
-  for (const field of fields) lines.push(`${label(field)}: ${value(body.stats?.[field])}`);
+  for (const field of fields) addMetric(metrics, label(field), body.stats[field]);
   const series = [];
   for (const field of ['daily_usage_buckets', 'cumulative_daily_usage_buckets', 'weekly_usage_buckets']) {
     const buckets = body.stats[field];
     if (buckets != null && !Array.isArray(buckets)) throw new Error('Invalid buckets');
-    series.push((buckets ?? []).map(bucket => {
+    series.push((buckets ?? []).filter(bucket => {
       if (bucket.tokens != null && (typeof bucket.tokens !== 'number' || !Number.isFinite(bucket.tokens) || bucket.tokens < 0)) throw new Error('Invalid token count');
-      return { date: value(bucket.start_date), tokens: bucket.tokens ?? null };
-    }));
+      const date = bucket.start_date;
+      if (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return false;
+      const timestamp = Date.parse(`${date}T00:00:00Z`);
+      return Number.isFinite(timestamp) && new Date(timestamp).toISOString().slice(0, 10) === date;
+    }).map(bucket => ({ date: bucket.start_date, tokens: bucket.tokens ?? null }))
+      .sort((first, second) => first.date.localeCompare(second.date)));
   }
-  const invocations = body.stats.top_invocations;
-  if (invocations != null && !Array.isArray(invocations)) throw new Error('Invalid invocations');
-  lines.push(`Top invocations: ${invocations?.map(item => `${value(item.type)} · ${value(item.plugin_name)} · ${value(item.skill_name)}: ${value(item.usage_count)}`).join(' / ') ?? unavailable}`);
-  lines.push(`Stats as of: ${value(body.metadata?.stats_as_of)} · generated at: ${value(body.metadata?.generated_at)}`);
-  return { lines, daily: series[0], cumulative: series[1], weekly: series[2] };
+  const suppliedInvocations = body.stats.top_invocations;
+  if (suppliedInvocations != null && !Array.isArray(suppliedInvocations)) throw new Error('Invalid invocations');
+  const invocations = (suppliedInvocations ?? []).map(item => {
+    const invocation = {};
+    for (const [source, target] of [['type', 'type'], ['plugin_name', 'pluginName'], ['skill_name', 'skillName'], ['usage_count', 'usageCount']]) {
+      if (item[source] == null) continue;
+      const cleaned = typeof item[source] === 'string' ? value(item[source]).trim() : (value(item[source]), item[source]);
+      if (cleaned !== '') invocation[target] = cleaned;
+    }
+    return invocation;
+  }).filter(item => Object.keys(item).length);
+  for (const field of ['stats_as_of', 'generated_at']) {
+    if (body.metadata?.[field] == null) continue;
+    const timestamp = Date.parse(body.metadata[field]);
+    if (!Number.isFinite(timestamp)) throw new Error('Invalid statistics timestamp');
+    addMetric(metrics, label(field), timestamp, 'datetime');
+  }
+  return { metrics, invocations, daily: series[0], cumulative: series[1], weekly: series[2] };
 }
 
 function official(url) {
@@ -115,8 +157,8 @@ export default function codexUsage(pi, services = {}) {
     const left = limits?.windows[0]?.leftPercent;
     return {
       summary: left == null ? 'Codex usage · unavailable' : `Codex usage · ${left}% left`,
-      overview: { lines: limits?.lines ?? [], windows: limits?.windows ?? [], updatedAt: limits?.at ?? null, stale: limits?.stale ?? false, error: authMessage ?? limits?.error ?? (limits ? null : 'Limits unavailable') },
-      analytics: { lines: analytics?.lines ?? [], daily: analytics?.daily ?? [], cumulative: analytics?.cumulative ?? [], weekly: analytics?.weekly ?? [], updatedAt: analytics?.at ?? null, stale: analytics?.stale ?? false, error: authMessage ?? analytics?.error ?? (analytics ? null : 'Analytics unavailable') },
+      overview: { metrics: limits?.metrics ?? [], windows: limits?.windows ?? [], updatedAt: limits?.at ?? null, stale: limits?.stale ?? false, error: authMessage ?? limits?.error ?? (limits ? null : 'Limits unavailable') },
+      analytics: { metrics: analytics?.metrics ?? [], invocations: analytics?.invocations ?? [], daily: analytics?.daily ?? [], cumulative: analytics?.cumulative ?? [], weekly: analytics?.weekly ?? [], updatedAt: analytics?.at ?? null, stale: analytics?.stale ?? false, error: authMessage ?? analytics?.error ?? (analytics ? null : 'Analytics unavailable') },
     };
   }
 
@@ -158,9 +200,13 @@ export default function codexUsage(pi, services = {}) {
       const used = window.usedPercent;
       const filled = used == null ? 0 : Math.round(used / 5);
       const bar = '█'.repeat(filled) + '░'.repeat(20 - filled);
-      lines.push(`Limit: ${window.label} · Used ${used == null ? unavailable : `${bar} ${used}%`} · Left ${window.leftPercent == null ? unavailable : `${window.leftPercent}%`} · Reset ${date(window.resetAt)}`);
+      const fragments = [`Limit: ${window.label}`];
+      if (used != null) fragments.push(`Used ${bar} ${used}%`);
+      if (window.leftPercent != null) fragments.push(`Left ${window.leftPercent}%`);
+      if (window.resetAt != null) fragments.push(`Reset ${date(window.resetAt)}`);
+      lines.push(fragments.join(' · '));
     }
-    lines.push(`${limits.stale ? 'Stale · last successful update' : 'Updated'}: ${limits.updatedAt == null ? unavailable : new Date(limits.updatedAt).toLocaleString()}`);
+    if (limits.updatedAt != null) lines.push(`${limits.stale ? 'Stale · last successful update' : 'Updated'}: ${localDate(limits.updatedAt)}`);
     ctx.ui.setWidget(key, lines, { placement: 'aboveEditor' });
     ctx.ui.setStatus(key, report.summary);
   }

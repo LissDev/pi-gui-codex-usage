@@ -44,8 +44,8 @@ current compact widget; changed output may show it again. Use the Hide command
 for durable hiding.
 
 The right report has two keyboard-accessible tabs: **Overview** for graphical
-quota meters and full account details, and **Analytics** for metrics plus daily,
-cumulative and weekly charts and tables covering every returned date. Close it
+quota meters and supplied account details, and **Analytics** for all-time metrics,
+invocation details and daily, cumulative and weekly charts with calendar heatmaps. Close it
 with the native workbench control; Hide affects compact only. A mounted report
 refreshes on entry and every three minutes. Closing/disposal stops its frontend
 polling; an already accepted finite backend request may finish within 25 seconds.
@@ -55,6 +55,20 @@ resumes frontend polling. A failed initial refresh shows unavailable feedback
 without prior-account metrics. Same-session branch navigation preserves the
 account report independently of compact's branch visibility; a new session
 clears the report before refreshing.
+
+Analytics starts with **30 days** selected. **7 days / 30 days / All** controls
+apply together to all three histories; limited periods include today and the
+preceding 6 or 29 days in the host's local calendar. All includes every supplied
+bucket. Lifetime statistics and top invocations remain explicitly **all time**.
+The period survives tab changes and live updates, and resets to 30 days when
+the report is reopened.
+
+Heatmap cells represent supplied days; weekly cells represent the supplied week
+start, without spreading a weekly total across days. Hover or focus a cell for
+its exact date and token count. Missing days and null counts stay neutral;
+explicit zero has its own color. A Less/More legend shows zero plus four green
+levels, scaled to the full supplied series so filtering does not change a
+bucket's intensity. The same heatmaps adapt to host light/dark themes.
 
 ## What is shown
 
@@ -69,7 +83,9 @@ The report displays fields supplied by the server:
 - Every returned daily, cumulative daily and weekly dated token bucket, named
   top plugin/skill invocations, and the server's statistics timestamps.
 
-Missing or null values say `unavailable`; an explicit zero remains zero. Remaining
+Missing or null field fragments and empty groups are omitted; an explicit zero
+remains zero. Booleans use green ✓ and red ✕ with accessible True/False names.
+Loading, authentication errors, source errors and stale feedback remain visible. Remaining
 quota percentage is `100 − used percentage`. Other metrics come directly from
 the server: the extension does not estimate subscription token costs or invent
 token totals, reset credits or analytics endpoints.
@@ -90,9 +106,9 @@ the previous account's cache before new requests start.
 Hide, session changes and shutdown abort requests and ignore late completions.
 Refreshes have a 25-second deadline, including authentication resolution.
 
-Reset and last-success times use the runtime's local timezone. Server bucket
-dates and `stats_as_of`/`generated_at` strings are preserved as supplied; no
-timezone is inferred for a date-only bucket.
+Reset, last-success and server metadata timestamps use the runtime's local
+`yyyy.mm.dd HH:mm` format. Bucket dates display as `yyyy.mm.dd`, preserving the
+source calendar date across timezones; compact chart ticks use `MM.DD`.
 
 ## Network and privacy
 
@@ -125,8 +141,9 @@ npm pack --dry-run
 Install development dependencies with `npm ci`. The browser suite uses locally
 installed Chrome (or `PLAYWRIGHT_CHANNEL`); synthetic tests require no Pi account
 or backend connection. They verify commands, lifecycle, outgoing requests,
-widget/status calls, safe report state, source caching, cancellation, graphical
-DOM, keyboard access and polling disposal. They do not establish real Electron
+widget/status calls, typed safe report state, source caching, cancellation,
+calendar filters, heatmap values/colors, local dates, graphical DOM, keyboard
+access and polling disposal. They do not establish real Electron
 rendering or live backend availability.
 
 The package includes `index.js`, `dist/` (plain browser ES modules and CSS),

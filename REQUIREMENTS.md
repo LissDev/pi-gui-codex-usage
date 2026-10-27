@@ -154,3 +154,47 @@ Production code must follow verified RED. Run `npm test` in this directory.
 Manual follow-up after GREEN: install unchanged pi-gui, exercise the menu,
 compact/hide, right report tabs, close/remount via Add tab or palette, and branch
 restoration; confirm no credentials appear. Live backend availability remains a separate probe.
+
+## Scenario and destination map — analytics display refinement (confirmed)
+
+Ready for TDD: YES. This supersedes legacy unavailable field placeholders,
+report `lines`, ISO date display and history tables above. Included: compact,
+Overview and Analytics presentation; excluded: host navigation, account actions,
+new endpoints, persisted UI preferences and additional dialogs.
+
+| Entry/scenario | Destination/result | Back, cancellation, restoration | State owner |
+| --- | --- | --- | --- |
+| Existing command/menu or host workbench catalogue | Existing Codex Usage destination, Overview initially | Existing host close/Back; compact visibility unchanged | Host frame and existing backend controller |
+| Overview tab | Supplied quota windows and typed scalar details only | Existing report tabs; no new route | Frontend report selection |
+| Analytics tab | All-time statistics/invocations and daily, cumulative, weekly charts plus heatmaps | Overview returns within same destination; filter retained | Frontend mount-local selection and period |
+| 7 days / 30 days / All | Common period filters all three dated series only; default 30 | Inclusive host-local calendar days ending today; switching tabs and live updates retains period; close/remount defaults 30 | Frontend period, current local calendar clock |
+| Pointer hover / keyboard focus on supplied heatmap bucket | Exact yyyy.mm.dd date and exact count tooltip | Pointer leave/blur dismisses; no independent task or dialog | Cell-local transient interaction state |
+| Missing/null field, empty group or history | Omit unavailable field fragments and empty sections; preserve explicit 0/false | Error, loading and stale feedback stays visible | Backend typed sanitizer; frontend conditional rendering |
+| Top invocation inline details | Only provided type, pluginName, skillName and usageCount, including 0 | No extra dialog or navigation; omit empty entries/section | Sanitized analytics snapshot and frontend rows |
+| Live state / identity verification / disposal | Preserve existing cached-data gate, finite refresh, polling and abort behavior | Existing close/Back releases timers/binding; no secondary back stack | Existing service/backend identity and frontend lifecycle |
+
+Public presentation contract: overview `{metrics, windows, updatedAt, stale,
+error}`, analytics `{metrics, invocations, daily, cumulative, weekly, updatedAt,
+stale, error}`. Metrics are flat `{label, value: string|number|boolean,
+format?: 'datetime'}`; datetime values are epoch milliseconds. Missing scalar
+fields are omitted. Invocations contain only provided `type`, `pluginName`,
+`skillName`, `usageCount`. No IDs, profile PII, nested arbitrary server data or
+compatibility `lines` are required. Histories remain `{date,tokens}`; null token
+counts remain gaps. Tests may temporarily supply legacy lines alongside typed
+metrics only to exercise the old renderer without fixture/runtime failures in RED.
+
+Booleans render green ✓ / red ✕ with accessible True/False names. Report and
+compact timestamps use local yyyy.mm.dd HH:mm, metadata dates follow the same
+rule; chart ticks use MM.DD. Source calendar dates are preserved across timezones.
+Heatmaps replace all history tables: daily/cumulative cell = supplied day,
+weekly cell = supplied week start without apportionment. Missing days/null
+buckets are neutral and visually distinct from explicit zero. Each metric has
+zero + four green levels based on its full supplied series maximum, stable when
+period changes, and a Less/More legend in both themes. Charts are smaller/denser,
+fit narrow panes and keep null gaps. Lifetime statistics and invocations remain
+all-time and are clearly scoped even while histories are filtered.
+
+Manual follow-up after GREEN: open existing report in narrow and wide host
+panes, switch both tabs and all periods, focus/hover cells, change host theme,
+receive a live update, close/remount and verify default 30; inspect loading,
+stale, error, zero/false, empty groups and sanitized invocation details.

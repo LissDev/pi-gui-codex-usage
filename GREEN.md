@@ -311,3 +311,120 @@ GREEN: exact focused command, primary account for isolated synthetic Chrome —
 `npm pack --dry-run --cache ../.npm-cache` exits 0: version 0.2.0, same ten intended
 files, **15.0 kB** packed. No new refactoring or behavior-change TDD exception.
 Finding accepted and fixed; production source frozen for independent verification.
+
+## Analytics display refinement — GREEN (2026-10-27)
+
+Accepted RED: `RED.md`'s completed analytics refinement handoff, following the
+confirmed scenario/destination map and atomic typed contract in REQUIREMENTS.
+Backend focus had seven tests: six behavioral failures, one already-passing
+null-history check (not claimed as RED). Browser focus had eight actual DOM
+failures. The coordinator accepted both runs before production edits.
+
+Production changes:
+
+- `index.js`: migrated report sections atomically from legacy strings to typed
+  scalar metrics and whitelisted invocation fields, omitted absent fragments
+  while preserving zero/false and null series gaps, parsed safe metadata times,
+  and formatted compact local timestamps without seconds. No legacy lines field
+  remains. Credential origins, generation/identity gates and polling are retained.
+- `dist/desktop.js`: typed values and accessible boolean icons, conditional empty
+  groups, shared local-calendar 7/30/All history filtering (default 30), separate
+  all-time statistics/invocations, dense charts with MM.DD ticks, and complete
+  dated heatmaps. Supplied cell values have pointer/keyboard tooltips; weekly
+  buckets stay on supplied week starts. Colors use each full series maximum,
+  retaining null/missing gaps separately from explicit zero.
+- `dist/desktop.css`: heatmap layout, zero/four-level green scale and Less/More
+  legend, light/dark semantic colors, boolean icon colors, compact charts and
+  period controls. History tables were replaced rather than retained.
+- README and package/lock metadata: documented refined behavior; version 0.2.1.
+
+Focused commands and GREEN results:
+
+```powershell
+node --test --test-isolation=none --test-name-pattern='refinement:|null quota and credit|complete limits|complete analytics' test/usage.test.js
+```
+
+**7 selected, 7 pass**, exit 0.
+
+```powershell
+node --test --test-isolation=none --test-name-pattern='refinement:|Analytics tab shows' test/desktop.test.js
+```
+
+**8 selected, 8 pass**, exit 0, primary account solely for isolated synthetic
+Chrome. Full broader `npm test`: **77 tests, 77 pass, 0 failed/cancelled/skipped**,
+exit 0. All shipped JavaScript passes the recorded syntax-check loop.
+`npm pack --dry-run --cache ../.npm-cache`: exit 0, version **0.2.1**, same ten
+intended files, **17.4 kB** packed. No runtime dependencies or new assets added.
+
+No tests edited, no post-GREEN refactoring, no behavior-change TDD exception,
+no host/config edits or publication by this owner. Source frozen for independent
+commands, native-host and visual checks plus role-owned reviews. Browser results
+do not establish real Electron rendering or live endpoint availability.
+
+## History calendar-date normalization — GREEN (2026-10-27)
+
+Accepted correctness finding and RED in `RED.md`: three public-service tests
+failed because all three histories retained missing/non-calendar/impossible dates
+and published valid entries out of order. Exact focused command:
+
+```powershell
+node --test --test-isolation=none --test-name-pattern='history date normalization:' test/usage.test.js
+```
+
+`index.js` now checks each source date against strict YYYY-MM-DD syntax and a UTC
+calendar round-trip, omits invalid entries and sorts each normalized series by
+its unchanged source date. Existing token validation remains in place; valid
+zero counts and null gaps are preserved. No frontend, auth, invocation or test
+changes; no compatibility parser or new helper abstraction.
+
+GREEN: focused **3 selected, 3 pass**, exit 0. Broader `npm test`, primary account
+for synthetic Chrome — **80 tests, 80 pass, 0 failed/cancelled/skipped**, exit 0.
+`node --check index.js` exits 0. `npm pack --dry-run --cache ../.npm-cache` exits
+0: version 0.2.1, ten intended files, **17.5 kB** packed. No refactoring or
+behavior-change TDD exception. Source frozen for independent verification/review.
+
+## Period focus and heatmap targets — GREEN (2026-10-27)
+
+Accepted RED in `RED.md`: three focused interaction tests, two behavioral
+failures (period focus lost, 12px heatmap target) and one already-passing touch
+tooltip check. The latter is preserved existing behavior, not new RED.
+
+```powershell
+node --test --test-isolation=none --test-name-pattern='interaction accessibility:' test/desktop.test.js
+```
+
+`dist/desktop.js` remembers a focused period button only when it is inside the
+panel being rebuilt, then focuses its equivalent after rendering. Keyboard
+selection and background snapshots retain focus without moving it from report
+tabs/outside controls. `dist/desktop.css` gives supplied cells 24x24px interaction
+targets with 14px visual colored squares and matching neutral gaps. No new touch
+handler, table, dialog or focus abstraction was added.
+
+GREEN: focused **3 selected, 3 pass**, exit 0, primary account solely for isolated
+synthetic Chrome. Full `npm test`: **83 tests, 83 pass, 0 failed/cancelled/skipped**,
+exit 0. `node --check dist/desktop.js` exits 0. Package dry run
+`npm pack --dry-run --cache ../.npm-cache` exits 0: version 0.2.1, ten intended
+files, **17.7 kB** packed. No test edits, refactoring, behavior-change TDD exception
+or host/config changes. Source frozen for independent/native verification/review.
+
+## Observed Electron touch completion — GREEN (2026-10-27)
+
+Accepted RED in `RED.md`: the independently recorded Electron sequence ends
+with touchend after pointerleave, without focus/click, hiding exact-value
+feedback. The real-DOM regression deliberately dispatches that recorded order;
+it does not claim hardware-event generation. Exact command:
+
+```powershell
+node --test --test-isolation=none --test-name-pattern='Electron touch sequence:' test/desktop.test.js
+```
+
+The only production change in `dist/desktop.js` attaches the existing tooltip
+show callback to touchend. It does not depend on synthetic focus/click and keeps
+existing pointerenter/leave, focus/blur, targets and period focus behavior.
+
+GREEN: focused **1 selected, 1 pass**, exit 0. Full `npm test`, primary account
+for synthetic Chrome — **84 tests, 84 pass, 0 failed/cancelled/skipped**, exit 0.
+`node --check dist/desktop.js` exits 0. Package dry run
+`npm pack --dry-run --cache ../.npm-cache` exits 0: version 0.2.1, ten intended
+files, **17.7 kB** packed. No test edits, refactoring or behavior-change TDD
+exception. Source frozen; fresh installed Electron verification is still required.

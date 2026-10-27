@@ -79,7 +79,7 @@ test('analytics failure remains independent from successful limits', async () =>
   assert.ok(!h.output().includes(secret));
 });
 
-test('null quota and credits are unavailable while explicit zero usage stays zero', async () => {
+test('null quota and credit fragments are omitted while explicit zero usage stays zero', async () => {
   const body = structuredClone(usage);
   body.rate_limit.primary_window.used_percent = null;
   body.rate_limit.secondary_window.used_percent = 0;
@@ -87,9 +87,9 @@ test('null quota and credits are unavailable while explicit zero usage stays zer
   const h = await harness({ fetch: () => response(body) });
   await h.command();
   const lines = h.reportText().split('\n');
-  assert.ok(lines.some(line => /7\s*days?|week/i.test(line) && /unavailable|unknown|n\/a/i.test(line)), 'Weekly null usage is unavailable');
+  assert.ok(!lines.some(line => /7\s*days?|week/i.test(line) && /unavailable|unknown|n\/a/i.test(line)), 'Null usage does not add unavailable fragments');
   assert.ok(lines.some(line => /5\s*(hours?|h)\b/i.test(line) && /0\s*%/.test(line)), 'Explicit zero is displayed');
-  assert.ok(lines.some(line => /credit/i.test(line) && /unavailable|unknown|n\/a/i.test(line)), 'Null credits unavailable');
+  assert.ok(!lines.some(line => /credit/i.test(line) && /unavailable|unknown|n\/a/i.test(line)), 'Null credits do not add unavailable fragments');
 });
 
 test('requests use Pi OAuth only, official usage URL and disabled redirects', async () => {
@@ -226,10 +226,10 @@ test('complete limits include review windows, credit buckets, model availability
   const text = h.reportText().toLowerCase();
   for (const metric of ['code review', '13%', '87%', '789', '4321', 'overage',
     'local', '17', '19', 'cloud', '23', '29', 'gpt-test-model', 'credits would enable',
-    'spend', 'individual limit', 'limit reached', 'additional', 'promo']) {
+    'spend', 'limit reached']) {
     assert.ok(text.includes(metric), `Available limits metric ${metric} appears`);
   }
-  assert.match(text, /available at[^\n]*(unavailable|unknown|n\/a)/);
+  assert.doesNotMatch(text, /available at|individual limit|additional limits|promo/, 'Absent limits details are omitted');
   assert.match(text, /1\s*days?|24\s*hours?/);
 });
 
@@ -243,9 +243,9 @@ test('complete analytics retains every scalar, all bucket dates, safe metadata a
   const h = await harness({ fetch: url => response(String(url) === endpoint ? usage : body) });
   await h.command();
   const text = h.reportText().replaceAll(',', '').toLowerCase();
-  for (const metric of ['longest running turn', 'unique skills', 'workspace rank', 'longest streak',
+  for (const metric of ['longest running turn', 'unique skills', 'longest streak',
     'most used reasoning effort percentage',
-    'stats as of', 'generated at', '2026-10-27', 'test plugin', 'test skill', '37']) {
+    'stats as of', 'generated at', 'test plugin', 'test skill', '37']) {
     assert.ok(text.includes(metric), `Available analytics metric ${metric} appears`);
   }
   assert.deepEqual(h.snapshot().analytics.daily, [
@@ -257,7 +257,7 @@ test('complete analytics retains every scalar, all bucket dates, safe metadata a
   assert.deepEqual(h.snapshot().analytics.weekly, [
     { date: '2026-10-19', tokens: 45678 }, { date: '2026-10-26', tokens: 8024 },
   ]);
-  assert.match(text, /workspace rank[^\n]*(unavailable|unknown|n\/a)/);
+  assert.doesNotMatch(text, /workspace rank/, 'Absent workspace rank is omitted');
   assert.ok(!h.output().includes('PRIVATE_PROFILE'));
   assert.ok(!h.output().includes('OPAQUE_'), 'Opaque invocation IDs are omitted');
 });
@@ -544,5 +544,107 @@ for (const [name, token] of [
     assert.match(h.reportText(), /account|auth|unavailable/i);
     assert.doesNotMatch(h.reportText(), /25\s*%|123[,.]?456/);
     assert.ok(!h.output().includes(token));
+  });
+}
+
+test('refinement: sanitized public metrics preserve scalar types and omit absent fields and empty arrays', async () => {
+  const limits = structuredClone(usage);
+  limits.credits = { has_credits: true, unlimited: false, balance: null, approx_local_messages: [] };
+  limits.rate_limit.allowed = false;
+  limits.rate_limit.limit_reached = true;
+  limits.rate_limit_reset_credits = { available_count: null, applicable_available_count: 0 };
+  const profile = { stats: { lifetime_tokens: 0, current_streak_days: null, total_threads: 8 }, metadata: { generated_at: '2026-10-27T16:01:00Z', stats_as_of: null } };
+  const h = await harness({ fetch: url => response(String(url) === endpoint ? limits : profile) });
+  await h.command();
+  const state = h.snapshot();
+  assert.ok(Array.isArray(state.overview.metrics), 'Public Overview exposes typed supplied scalar metrics');
+  assert.ok(Array.isArray(state.analytics.metrics), 'Public Analytics exposes typed supplied scalar metrics');
+  assert.equal(Object.hasOwn(state.overview, 'lines'), false, 'Internal v0.2 contract migrates atomically without duplicate legacy strings');
+  for (const section of [state.overview, state.analytics]) {
+    assert.ok(section.metrics.every(metric => typeof metric.label === 'string' && ['string', 'number', 'boolean'].includes(typeof metric.value)));
+    assert.ok(section.metrics.every(metric => metric.value !== 'unavailable'));
+  }
+  const metric = (section, label) => section.metrics.find(item => label.test(item.label));
+  assert.equal(metric(state.overview, /unlimited/i)?.value, false);
+  assert.equal(metric(state.overview, /has credits|credits available|available credits/i)?.value, true);
+  assert.equal(metric(state.overview, /applicable/i)?.value, 0);
+  assert.equal(metric(state.analytics, /lifetime tokens/i)?.value, 0);
+  assert.equal(metric(state.analytics, /current streak/i), undefined);
+  assert.equal(metric(state.overview, /approx local messages/i), undefined);
+  const generated = metric(state.analytics, /generated at/i);
+  assert.deepEqual(generated && { value: generated.value, format: generated.format }, { value: Date.parse(profile.metadata.generated_at), format: 'datetime' });
+  assert.deepEqual(state.analytics.invocations, []);
+  assert.deepEqual(state.analytics.daily, []);
+});
+
+test('refinement: sanitized invocation details retain only provided known fields including zero without IDs or PII', async () => {
+  const profile = structuredClone(analytics);
+  profile.stats.top_invocations = [
+    { type: 'plugin', plugin_id: 'PRIVATE_PLUGIN_ID', plugin_name: 'Named plugin', skill_id: null, skill_name: null, usage_count: 0, email: 'PRIVATE_EMAIL' },
+    { type: 'skill', plugin_id: null, plugin_name: null, skill_id: 'PRIVATE_SKILL_ID', skill_name: 'Named skill', usage_count: 9 },
+    { type: null, plugin_name: null, skill_name: null, usage_count: null },
+  ];
+  const h = await harness({ fetch: url => response(String(url) === endpoint ? usage : profile) });
+  await h.command();
+  assert.deepEqual(h.snapshot().analytics.invocations, [
+    { type: 'plugin', pluginName: 'Named plugin', usageCount: 0 },
+    { type: 'skill', skillName: 'Named skill', usageCount: 9 },
+  ], 'Structured invocation rows retain real zero, omit nullable fragments and skip empty entries');
+  assert.doesNotMatch(h.output(), /PRIVATE_PLUGIN_ID|PRIVATE_SKILL_ID|PRIVATE_EMAIL|PRIVATE_PROFILE/);
+});
+
+test('refinement: compact omits unavailable quota fragments and uses local dotted minute timestamps', async () => {
+  const limits = structuredClone(usage);
+  limits.rate_limit.primary_window.used_percent = null;
+  limits.rate_limit.primary_window.reset_at = null;
+  limits.rate_limit.secondary_window.used_percent = 0;
+  limits.rate_limit.secondary_window.reset_at = null;
+  const h = await harness({ fetch: url => response(String(url) === endpoint ? limits : analytics) });
+  await h.command();
+  const text = h.compactText();
+  assert.doesNotMatch(text, /unavailable|unknown|n\/a|Reset/i, 'Missing percentage/reset fragments are hidden in successful compact data');
+  assert.match(text, /Used[^\n]*0%/);
+  assert.match(text, /Left[^\n]*100%/);
+  const date = new Date(timestamp);
+  const pad = number => String(number).padStart(2, '0');
+  const local = `${date.getFullYear()}.${pad(date.getMonth() + 1)}.${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  assert.ok(text.includes(local), 'Updated time uses host-local yyyy.mm.dd HH:mm without seconds');
+});
+
+test('refinement: missing histories remain empty and null token counts remain gaps rather than zero', async () => {
+  const profile = { stats: { daily_usage_buckets: [{ start_date: '2026-10-25', tokens: 0 }, { start_date: '2026-10-26', tokens: null }] }, metadata: {} };
+  const h = await harness({ fetch: url => response(String(url) === endpoint ? usage : profile) });
+  await h.command();
+  assert.deepEqual(h.snapshot().analytics.daily, [{ date: '2026-10-25', tokens: 0 }, { date: '2026-10-26', tokens: null }]);
+  assert.deepEqual(h.snapshot().analytics.weekly, []);
+  assert.deepEqual(h.snapshot().analytics.cumulative, []);
+  assert.equal(h.snapshot().analytics.error, null, 'Legitimate missing fields are not source failures');
+});
+
+for (const [field, series] of [
+  ['daily_usage_buckets', 'daily'],
+  ['cumulative_daily_usage_buckets', 'cumulative'],
+  ['weekly_usage_buckets', 'weekly'],
+]) {
+  test(`history date normalization: ${series} omits invalid calendar dates and sorts valid buckets without changing zero or null`, async () => {
+    const profile = {
+      stats: { [field]: [
+        { tokens: 111 },
+        { start_date: 'not-a-date', tokens: 222 },
+        { start_date: '2026-02-30', tokens: 333 },
+        { start_date: '2026-10-27', tokens: 456 },
+        { start_date: '2026-10-25', tokens: 0 },
+        { start_date: '2026-10-26', tokens: null },
+      ] },
+      metadata: {},
+    };
+    const h = await harness({ fetch: url => response(String(url) === endpoint ? usage : profile) });
+    await h.command();
+    assert.equal(h.snapshot().analytics.error, null, 'Bad date entries do not discard valid history');
+    assert.deepEqual(h.snapshot().analytics[series], [
+      { date: '2026-10-25', tokens: 0 },
+      { date: '2026-10-26', tokens: null },
+      { date: '2026-10-27', tokens: 456 },
+    ], 'Public history contains only real source calendar dates in chronological order');
   });
 }
