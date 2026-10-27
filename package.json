@@ -1,0 +1,17 @@
+{
+  "name": "pi-gui-codex-usage",
+  "version": "0.1.0",
+  "type": "module",
+  "displayName": "Codex Usage",
+  "description": "Codex subscription limits and server usage analytics in Pi's native extension dock.",
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/LissDev/pi-gui-codex-usage.git" },
+  "keywords": ["pi-package", "pi-extension", "codex", "usage"],
+  "files": ["index.js", "README.md", "LICENSE"],
+  "pi": { "extensions": ["./index.js"] },
+  "peerDependencies": { "@earendil-works/pi-coding-agent": "*" },
+  "peerDependenciesMeta": { "@earendil-works/pi-coding-agent": { "optional": true } },
+  "scripts": {
+    "test": "node --test --test-isolation=none test/*.test.js"
+  }
+}
