@@ -5,6 +5,8 @@ const root = new URL('../', import.meta.url);
 const secret = 'TEST_ONLY_SECRET_NEVER_RENDER';
 const endpoint = 'https://chatgpt.com/backend-api/wham/usage';
 const analyticsEndpoint = 'https://chatgpt.com/backend-api/wham/profiles/me';
+const messagesPath = '/backend-api/wham/analytics/daily-workspace-usage-counts';
+const messages = { data: [{ date: '2026-10-26', totals: { turns: 8 }, models: [{ model: 'gpt-6.1-sol', turns: 8 }], clients: [{ client_id: 'CODEX_CLI', turns: 8 }] }] };
 const timestamp = Date.parse('2026-10-27T17:00:00Z');
 const usage = {
   plan_type: 'plus',
@@ -130,7 +132,9 @@ async function harness(options = {}) {
     fetch: async (url, init) => {
       requests.push({ url: String(url), init });
       const usageCount = requests.filter(r => r.url === endpoint).length;
-      return options.fetch ? options.fetch(url, init, usageCount) : response(String(url) === analyticsEndpoint ? analytics : usage);
+      if (options.fetch) return options.fetch(url, init, usageCount);
+      if (new URL(url).pathname === messagesPath) return response(messages);
+      return response(String(url) === analyticsEndpoint ? analytics : usage);
     },
   };
   const extension = await loadExtension();
@@ -170,4 +174,4 @@ async function harness(options = {}) {
   };
 }
 
-export { root, secret, endpoint, analyticsEndpoint, timestamp, usage, analytics, response, loadExtension, harness };
+export { root, secret, endpoint, analyticsEndpoint, messagesPath, messages, timestamp, usage, analytics, response, loadExtension, harness };

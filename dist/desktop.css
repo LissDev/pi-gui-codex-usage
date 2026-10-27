@@ -71,6 +71,7 @@ svg text { fill: var(--foreground); font: 11px system-ui, sans-serif; }
 .usage-legend { list-style: none; padding: 0; margin: 8px 0; display: grid; gap: 8px; }
 .usage-legend li { display: flex; align-items: center; gap: 8px; }
 .usage-swatch { display: inline-block; width: 12px; height: 12px; border-radius: 2px; flex-shrink: 0; }
+.message-swatch { width: 32px; margin: 0; }
 .usage-tooltip { position: absolute; left: 0; max-width: 100%; padding: 8px; background: var(--background); color: var(--foreground); border: 1px solid var(--accent); border-radius: 4px; font-size: 12px; white-space: pre-line; z-index: 2; }
 .invocations { margin-top: 24px; }
 .invocations ul { margin: 0; padding-left: 18px; }

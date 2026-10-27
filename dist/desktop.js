@@ -27,16 +27,13 @@ const usageFeatures = { user: 'Chats', subagent: 'Subagents', thread_title: 'Cha
 const usageTriggers = { user: 'User messages', composer: 'User messages', composer_queue: 'Queued messages', automation_cron_scheduled: 'Scheduled automations', automation_heartbeat_scheduled: 'Scheduled follow-ups' };
 const usageAmount = (value, units) => `${value}${units === 'percent' ? '%' : ' credits'}`;
 
-function usageHistory(report, selection, grouping, days, loading, changeRange, changeGrouping, selectedDay, changeDay) {
-  const region = element('section', null, 'usage-history');
-  region.setAttribute('role', 'region');
-  region.setAttribute('aria-label', 'Usage history');
-  region.append(element('h2', 'Usage history'));
+function chartControls(prefix, view, groupOptions, changeRange, changeGrouping, changeDay) {
+  const { range: selection, days, grouping } = view;
   const controls = element('div', null, 'usage-controls');
   for (const duration of [7, 30]) {
     const button = element('button', `${duration} days`);
     button.type = 'button';
-    button.dataset.control = `usage-${duration}`;
+    button.dataset.control = `${prefix}-${duration}`;
     button.setAttribute('aria-pressed', String(days === duration));
     button.onclick = () => {
       const range = periodBounds(duration);
@@ -47,7 +44,7 @@ function usageHistory(report, selection, grouping, days, loading, changeRange, c
   for (const [name, direction] of [['Previous', -1], ['Next', 1]]) {
     const button = element('button', name);
     button.type = 'button';
-    button.dataset.control = `usage-${name}`;
+    button.dataset.control = `${prefix}-${name}`;
     button.disabled = direction === 1 && selection.endDate >= dayKey(new Date());
     button.onclick = () => {
       const shift = key => {
@@ -62,8 +59,8 @@ function usageHistory(report, selection, grouping, days, loading, changeRange, c
   }
   const label = element('label', 'Group by');
   const select = element('select');
-  select.dataset.control = 'usage-group';
-  for (const [name, field] of [['By feature', 'thread_source'], ['By model', 'model'], ['By surface', 'surface'], ['By turn start', 'turn_trigger']]) {
+  select.dataset.control = `${prefix}-group`;
+  for (const [name, field] of groupOptions) {
     const option = element('option', name);
     option.value = field;
     option.selected = grouping === field;
@@ -74,7 +71,7 @@ function usageHistory(report, selection, grouping, days, loading, changeRange, c
   controls.append(label);
   const dayLabel = element('label', 'Day details');
   const daySelect = element('select');
-  daySelect.dataset.control = 'usage-day';
+  daySelect.dataset.control = `${prefix}-day`;
   daySelect.disabled = true;
   const placeholder = element('option', 'Select a day');
   placeholder.value = '';
@@ -82,6 +79,42 @@ function usageHistory(report, selection, grouping, days, loading, changeRange, c
   daySelect.onchange = () => changeDay(daySelect.value);
   dayLabel.append(daySelect);
   controls.append(dayLabel);
+  return { controls, daySelect };
+}
+
+function appendDayDetails(region, daySelect, data, selectedDay, describe) {
+  daySelect.disabled = !data.length;
+  for (const day of data) {
+    const option = element('option', calendarDate(day.date));
+    option.value = day.date;
+    option.selected = selectedDay === day.date;
+    daySelect.append(option);
+  }
+  const chosen = data.find(day => day.date === selectedDay);
+  if (chosen) {
+    const detail = element('section', describe(chosen), 'usage-day-details');
+    detail.setAttribute('role', 'region');
+    detail.setAttribute('aria-label', 'Day details');
+    detail.setAttribute('aria-live', 'polite');
+    region.append(detail);
+  }
+}
+
+function svgShape(parent, tag, attributes, text) {
+  const node = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for (const [name, value] of Object.entries(attributes)) node.setAttribute(name, String(value));
+  if (text != null) node.textContent = text;
+  parent.append(node);
+  return node;
+}
+
+function usageHistory(report, view, changeRange, changeGrouping, changeDay) {
+  const { range: selection, grouping, days, loading, day: selectedDay } = view;
+  const region = element('section', null, 'usage-history');
+  region.setAttribute('role', 'region');
+  region.setAttribute('aria-label', 'Usage history');
+  region.append(element('h2', 'Usage history'));
+  const { controls, daySelect } = chartControls('usage', view, [['By feature', 'thread_source'], ['By model', 'model'], ['By surface', 'surface'], ['By turn start', 'turn_trigger']], changeRange, changeGrouping, changeDay);
   region.append(controls, element('p', `${calendarDate(selection.startDate)} – ${calendarDate(selection.endDate)}`, 'history-range'));
   const matching = report.startDate === selection.startDate && report.endDate === selection.endDate;
   if (loading || !matching) {
@@ -111,22 +144,8 @@ function usageHistory(report, selection, grouping, days, loading, changeRange, c
     if (!report.error) region.append(element('p', 'No supplied usage values in this range'));
     return region;
   }
-  daySelect.disabled = false;
   const dayDetails = day => `${calendarDate(day.date)} · ${day.incomplete ? 'Known subtotal ' : ''}${usageAmount(day.total, report.units)}${day.incomplete ? '\nSome attribution is missing' : ''}\n${[...day.groups].map(([key, value]) => `${names(key)}: ${usageAmount(value, report.units)}`).join('\n')}`;
-  for (const day of data) {
-    const option = element('option', calendarDate(day.date));
-    option.value = day.date;
-    option.selected = selectedDay === day.date;
-    daySelect.append(option);
-  }
-  const chosen = data.find(day => day.date === selectedDay);
-  if (chosen) {
-    const detail = element('section', dayDetails(chosen), 'usage-day-details');
-    detail.setAttribute('role', 'region');
-    detail.setAttribute('aria-label', 'Day details');
-    detail.setAttribute('aria-live', 'polite');
-    region.append(detail);
-  }
+  appendDayDetails(region, daySelect, data, selectedDay, dayDetails);
   const keys = [...totals.keys()];
   const color = key => `var(--usage-series-${keys.indexOf(key) % 8})`;
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -134,13 +153,6 @@ function usageHistory(report, selection, grouping, days, loading, changeRange, c
   svg.setAttribute('viewBox', '0 0 360 220');
   svg.setAttribute('role', 'img');
   svg.setAttribute('aria-label', `Selected usage in ${report.units}`);
-  const shape = (parent, tag, attributes, text) => {
-    const node = document.createElementNS(svg.namespaceURI, tag);
-    for (const [name, value] of Object.entries(attributes)) node.setAttribute(name, String(value));
-    if (text != null) node.textContent = text;
-    parent.append(node);
-    return node;
-  };
   const tooltip = element('div', '', 'usage-tooltip');
   tooltip.id = 'usage-history-tooltip';
   tooltip.setAttribute('role', 'tooltip');
@@ -148,8 +160,8 @@ function usageHistory(report, selection, grouping, days, loading, changeRange, c
   const maximum = Math.max(...data.map(day => day.total), 1);
   for (const fraction of [0, .5, 1]) {
     const y = 175 - fraction * 145;
-    shape(svg, 'line', { x1: 36, x2: 348, y1: y, y2: y, class: 'grid-line' });
-    shape(svg, 'text', { x: 30, y: y + 4, 'text-anchor': 'end' }, `${maximum * fraction}${report.units === 'percent' ? '%' : ''}`);
+    svgShape(svg, 'line', { x1: 36, x2: 348, y1: y, y2: y, class: 'grid-line' });
+    svgShape(svg, 'text', { x: 30, y: y + 4, 'text-anchor': 'end' }, `${maximum * fraction}${report.units === 'percent' ? '%' : ''}`);
   }
   const bin = 312 / days;
   const firstDate = Date.parse(`${selection.startDate}T00:00:00Z`);
@@ -157,12 +169,12 @@ function usageHistory(report, selection, grouping, days, loading, changeRange, c
     const index = (Date.parse(`${day.date}T00:00:00Z`) - firstDate) / 86400000;
     const x = 36 + index * bin + bin * .15;
     const totalLabel = `${day.incomplete ? 'Known subtotal ' : ''}${usageAmount(day.total, report.units)}`;
-    const bar = shape(svg, 'g', { role: 'button', tabindex: 0, 'aria-label': `${calendarDate(day.date)} · ${totalLabel}`, 'aria-describedby': tooltip.id });
-    shape(bar, 'rect', { x, y: 25, width: bin * .7, height: 155, fill: 'transparent' });
+    const bar = svgShape(svg, 'g', { role: 'button', tabindex: 0, 'aria-label': `${calendarDate(day.date)} · ${totalLabel}`, 'aria-describedby': tooltip.id });
+    svgShape(bar, 'rect', { x, y: 25, width: bin * .7, height: 155, fill: 'transparent' });
     let accumulated = 0;
     for (const [key, value] of day.groups) {
       const height = value / maximum * 145;
-      shape(bar, 'rect', { x, y: 175 - accumulated - height, width: bin * .7, height, fill: color(key) });
+      svgShape(bar, 'rect', { x, y: 175 - accumulated - height, width: bin * .7, height, fill: color(key) });
       accumulated += height;
     }
     const show = () => {
@@ -179,7 +191,7 @@ function usageHistory(report, selection, grouping, days, loading, changeRange, c
   const ticks = days === 7 ? Array.from({ length: days }, (_, index) => index) : [0, 7, 14, 21, days - 1];
   for (const index of ticks) {
     const date = new Date(firstDate + index * 86400000).toISOString().slice(0, 10);
-    shape(svg, 'text', { x: 36 + (index + .5) * bin, y: 204, 'text-anchor': 'middle' }, calendarDate(date).slice(5));
+    svgShape(svg, 'text', { x: 36 + (index + .5) * bin, y: 204, 'text-anchor': 'middle' }, calendarDate(date).slice(5));
   }
   const legend = element('ul', null, 'usage-legend');
   const total = [...totals.values()].reduce((sum, value) => sum + value, 0);
@@ -194,6 +206,105 @@ function usageHistory(report, selection, grouping, days, loading, changeRange, c
   }
   const incomplete = report.data.some(day => day.date >= selection.startDate && day.date <= selection.endDate && day.attribution.some(row => row.value == null));
   region.append(svg, tooltip, element('p', incomplete ? 'Share of known selected usage' : 'Share of selected usage', 'freshness'), legend);
+  return region;
+}
+
+const messageClients = { CODEX_DESKTOP_APP: 'Desktop', CODEX_WORK_DESKTOP: 'Desktop', CODEX_CLI: 'CLI', CODEX_IDE_VSCODE: 'VS Code', CODEX_WEB: 'Web', CODEX_WORK_WEB: 'Web (Work)', CODEX_WORK_MOBILE: 'Mobile', CODEX_GITHUB: 'Code review' };
+
+function messageDays(report, view) {
+  return report.data.filter(day => day.date >= view.range.startDate && day.date <= view.range.endDate).map(day => {
+    const groups = new Map();
+    const rows = day[view.grouping];
+    for (const row of rows) {
+      if (row.turns == null) continue;
+      const name = view.grouping === 'models' ? ['other', 'codex-auto-review'].includes(row.model) ? 'Other' : row.model : messageClients[row.client_id] ?? row.client_id;
+      groups.set(name || 'Unknown', (groups.get(name || 'Unknown') ?? 0) + row.turns);
+    }
+    const known = [...groups.values()].reduce((sum, count) => sum + count, 0);
+    const reported = day.totals.turns;
+    if (reported != null && reported > known) groups.set('Other', (groups.get('Other') ?? 0) + reported - known);
+    return {
+      date: day.date, groups, total: reported ?? (groups.size ? known : null),
+      subtotal: reported == null, incomplete: reported == null || rows.some(row => row.turns == null),
+      discrepancy: reported != null && known > reported,
+    };
+  }).filter(day => day.total != null);
+}
+
+function messagesChart(report, view, changeRange, changeGrouping, changeDay) {
+  const region = element('section', null, 'usage-history');
+  region.setAttribute('role', 'region');
+  region.setAttribute('aria-label', 'Messages');
+  region.append(element('h2', 'Messages'));
+  const { controls, daySelect } = chartControls('messages', view, [['By model', 'models'], ['By surface', 'clients']], changeRange, changeGrouping, changeDay);
+  region.append(controls, element('p', `${calendarDate(view.range.startDate)} – ${calendarDate(view.range.endDate)}`, 'history-range'));
+  if (view.loading || report.startDate !== view.range.startDate || report.endDate !== view.range.endDate) {
+    region.append(element('p', 'Loading messages…', 'freshness'));
+    return region;
+  }
+  region.append(freshness(report), element('p', `Data as of: ${report.dataAsOf == null ? 'unknown' : localDate(report.dataAsOf)}`, 'freshness'));
+  if (report.error) region.append(element('p', report.error, 'error'));
+  const data = messageDays(report, view);
+  if (!data.length) {
+    if (!report.error) region.append(element('p', report.data.length ? 'No supplied message counts in this range' : 'No messages data in this range'));
+    return region;
+  }
+  const incomplete = report.data.some(day => day.date >= view.range.startDate && day.date <= view.range.endDate && (day.totals.turns == null || day[view.grouping].some(row => row.turns == null)));
+  const total = data.reduce((sum, day) => sum + day.total, 0);
+  region.append(element('p', `${incomplete ? 'Known subtotal' : 'Reported total'}: ${amount(total)} messages`, 'quota-value'));
+  const describe = day => `${calendarDate(day.date)} · ${day.subtotal ? 'Known subtotal' : 'Total'} ${amount(day.total)} messages${day.incomplete ? '\nSome counts are missing' : ''}${day.discrepancy ? '\nGrouped counts exceed the reported total' : ''}\n${[...day.groups].map(([name, count]) => `${name}: ${amount(count)} messages`).join('\n')}`;
+  appendDayDetails(region, daySelect, data, view.day, describe);
+  const keys = [...new Set(data.flatMap(day => [...day.groups.keys()]))];
+  const color = key => key === null ? 'var(--foreground)' : `var(--usage-series-${keys.indexOf(key) % 8})`;
+  const dash = key => key === null ? '4 3' : keys.indexOf(key) < 8 ? 'none' : `${Math.floor(keys.indexOf(key) / 8) * 2 + 4} 3`;
+  const pointStyle = key => keys.indexOf(key) < 8 ? { fill: color(key) } : { fill: 'var(--background)', stroke: color(key), 'stroke-width': 1.5 };
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.classList.add('usage-chart');
+  svg.setAttribute('viewBox', '0 0 360 220');
+  svg.setAttribute('role', 'img');
+  svg.setAttribute('aria-label', 'Messages by day; exact counts in Day details');
+  const maximum = Math.max(1, ...data.flatMap(day => [day.total, ...day.groups.values()]));
+  for (const count of new Set([0, Math.ceil(maximum / 2), maximum])) {
+    const y = 175 - count / maximum * 145;
+    svgShape(svg, 'line', { x1: 36, x2: 348, y1: y, y2: y, class: 'grid-line' });
+    svgShape(svg, 'text', { x: 30, y: y + 4, 'text-anchor': 'end' }, String(count));
+  }
+  const firstDate = Date.parse(`${view.range.startDate}T00:00:00Z`);
+  const byDate = new Map(data.map(day => [day.date, day]));
+  for (const key of [null, ...keys]) {
+    let path = '';
+    let connected = false;
+    for (let index = 0; index < view.days; index++) {
+      const date = new Date(firstDate + index * 86400000).toISOString().slice(0, 10);
+      const day = byDate.get(date);
+      const count = key === null ? day?.total : day?.groups.get(key);
+      if (count == null) { connected = false; continue; }
+      const x = 36 + (index + .5) / view.days * 312;
+      const y = 175 - count / maximum * 145;
+      path += `${connected ? 'L' : 'M'}${x},${y} `;
+      connected = true;
+      const point = svgShape(svg, 'circle', { cx: x, cy: y, r: 3, ...pointStyle(key) });
+      svgShape(point, 'title', {}, describe(day));
+    }
+    svgShape(svg, 'path', { d: path, fill: 'none', stroke: color(key), 'stroke-width': key === null ? 1 : 2, 'stroke-dasharray': dash(key) });
+  }
+  for (const index of view.days === 7 ? [0, 1, 2, 3, 4, 5, 6] : [0, 7, 14, 21, view.days - 1]) {
+    const date = new Date(firstDate + index * 86400000).toISOString().slice(0, 10);
+    svgShape(svg, 'text', { x: 36 + (index + .5) / view.days * 312, y: 204, 'text-anchor': 'middle' }, calendarDate(date).slice(5));
+  }
+  const legend = element('ul', null, 'usage-legend');
+  for (const key of [null, ...keys]) {
+    const swatch = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    swatch.setAttribute('class', 'usage-swatch message-swatch');
+    swatch.setAttribute('viewBox', '0 0 32 12');
+    swatch.setAttribute('aria-hidden', 'true');
+    svgShape(swatch, 'line', { x1: 1, x2: 31, y1: 6, y2: 6, stroke: color(key), 'stroke-width': key === null ? 1 : 2, 'stroke-dasharray': dash(key) });
+    svgShape(swatch, 'circle', { cx: 16, cy: 6, r: 3, ...pointStyle(key) });
+    const item = element('li');
+    item.append(swatch, element('span', key === null ? incomplete ? 'Known total / subtotal' : 'Reported total' : key));
+    legend.append(item);
+  }
+  region.append(svg, legend);
   return region;
 }
 
@@ -421,12 +532,10 @@ export async function mount(root, host) {
   let unsubscribe;
   let refreshing = false;
   let requestEpoch = 0;
-  let usageDays = 7;
+  let verificationEpoch = 0;
   const latestUsage = periodBounds(7);
-  let usageRange = { startDate: latestUsage.start, endDate: latestUsage.end };
-  let usageGrouping = 'thread_source';
-  let usageDay;
-  let usageLoading = false;
+  const historyView = { days: 7, range: { startDate: latestUsage.start, endDate: latestUsage.end }, grouping: 'thread_source', day: undefined, loading: false, epoch: 0 };
+  const messagesView = { days: 7, range: { startDate: latestUsage.start, endDate: latestUsage.end }, grouping: 'models', day: undefined, loading: false, epoch: 0 };
 
   function render(resetScroll = false) {
     const focusedUsage = panel.querySelector('.usage-controls :focus')?.dataset.control;
@@ -457,8 +566,12 @@ export async function mount(root, host) {
       if (section.metrics.length) panel.append(element('h2', 'Account and quota details'), metricList(section.metrics));
     } else {
       if (snapshot.history) {
-        if (!usageLoading && snapshot.history.startDate === usageRange.startDate && snapshot.history.endDate === usageRange.endDate && !snapshot.history.data.some(day => day.date === usageDay && day.attribution.some(row => row.value != null))) usageDay = undefined;
-        panel.append(usageHistory(snapshot.history, usageRange, usageGrouping, usageDays, usageLoading, changeUsageRange, field => { usageGrouping = field; render(); }, usageDay, day => { usageDay = day; render(); }));
+        if (!historyView.loading && snapshot.history.startDate === historyView.range.startDate && snapshot.history.endDate === historyView.range.endDate && !snapshot.history.data.some(day => day.date === historyView.day && day.attribution.some(row => row.value != null))) historyView.day = undefined;
+        panel.append(usageHistory(snapshot.history, historyView, (range, days) => changeCardRange(historyView, range, days, 'refreshHistory'), field => { historyView.grouping = field; render(); }, day => { historyView.day = day; render(); }));
+      }
+      if (snapshot.messages) {
+        if (!messagesView.loading && snapshot.messages.startDate === messagesView.range.startDate && snapshot.messages.endDate === messagesView.range.endDate && !messageDays(snapshot.messages, messagesView).some(day => day.date === messagesView.day)) messagesView.day = undefined;
+        panel.append(messagesChart(snapshot.messages, messagesView, (range, days) => changeCardRange(messagesView, range, days, 'refreshMessages'), field => { messagesView.grouping = field; render(); }, day => { messagesView.day = day; render(); }));
       }
       if (section.metrics.length) panel.append(element('h2', 'All-time statistics'), metricList(section.metrics));
       if (section.invocations.length) {
@@ -528,49 +641,51 @@ export async function mount(root, host) {
     root.replaceChildren();
   };
   host.signal.addEventListener('abort', dispose, { once: true });
-  async function changeUsageRange(range, days) {
+  function acceptVerification(result, epoch, failed = false) {
+    if (epoch < verificationEpoch || (epoch < requestEpoch && result?.verified !== true)) return;
+    verificationEpoch = epoch;
+    verified = result?.verified === true;
+    snapshot = verified ? service.state.value : undefined;
+    connection.textContent = verified ? '' : failed ? 'Refresh unavailable' : 'Account verification unavailable';
+  }
+
+  async function changeCardRange(view, range, days, method) {
     const epoch = ++requestEpoch;
-    usageRange = range;
-    if (usageDay < range.startDate || usageDay > range.endDate) usageDay = undefined;
-    usageDays = days;
-    usageLoading = true;
+    view.epoch = epoch;
+    view.range = range;
+    if (view.day < range.startDate || view.day > range.endDate) view.day = undefined;
+    view.days = days;
+    view.loading = true;
     render();
     try {
-      const result = await service.refreshHistory(range, context);
-      if (!disposed && epoch === requestEpoch) {
-        usageLoading = false;
-        verified = result?.verified === true;
-        snapshot = verified ? service.state.value : undefined;
-        connection.textContent = verified ? '' : 'Account verification unavailable';
+      const result = await service[method](range, context);
+      if (!disposed && epoch === view.epoch) {
+        view.loading = false;
+        acceptVerification(result, epoch);
       }
     } catch {
-      if (!disposed && epoch === requestEpoch) {
-        verified = false;
-        snapshot = undefined;
-        connection.textContent = 'Refresh unavailable';
-      }
+      if (!disposed && epoch === view.epoch) acceptVerification(undefined, epoch, true);
     } finally {
-      if (!disposed && epoch === requestEpoch) { usageLoading = false; render(); }
+      if (!disposed && epoch === view.epoch) { view.loading = false; render(); }
     }
   }
   async function refresh() {
     if (disposed || refreshing) return;
     refreshing = true;
     const epoch = ++requestEpoch;
+    historyView.epoch = epoch;
+    messagesView.epoch = epoch;
     try {
-      const result = await service.refresh({ historyRange: usageRange }, context);
-      if (!disposed && epoch === requestEpoch) {
-        usageLoading = false;
-        verified = result?.verified === true;
-        snapshot = verified ? service.state.value : undefined;
-        connection.textContent = verified ? '' : 'Account verification unavailable';
+      const result = await service.refresh({ historyRange: historyView.range, messagesRange: messagesView.range }, context);
+      if (!disposed) {
+        for (const view of [historyView, messagesView]) if (view.epoch === epoch) view.loading = false;
+        acceptVerification(result, epoch);
         render();
       }
     } catch {
-      if (!disposed && epoch === requestEpoch) {
-        verified = false;
-        snapshot = undefined;
-        connection.textContent = 'Refresh unavailable';
+      if (!disposed) {
+        for (const view of [historyView, messagesView]) if (view.epoch === epoch) view.loading = false;
+        acceptVerification(undefined, epoch, true);
         render();
       }
     } finally { refreshing = false; }

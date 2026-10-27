@@ -87,6 +87,251 @@ async function historyRegion(page) {
   return region;
 }
 
+const messagesSnapshot = () => ({ ...historySnapshot(), messages: {
+  startDate: '2026-10-21', endDate: '2026-10-27', dataAsOf: null, updatedAt: timestamp, stale: false, error: null,
+  data: [
+    { date: '2026-10-25', totals: { turns: 4 }, models: [{ model: 'gpt-6.1-sol', turns: 3 }, { model: 'gpt-6-luna', turns: 1 }], clients: [{ client_id: 'CODEX_CLI', turns: 4 }] },
+    { date: '2026-10-26', totals: { turns: 10 }, models: [{ model: 'gpt-6.1-sol', turns: 4 }, { model: 'gpt-6-luna', turns: 2 }, { model: 'codex-auto-review', turns: 1 }, { model: 'other', turns: 1 }],
+      clients: [{ client_id: 'CODEX_DESKTOP_APP', turns: 2 }, { client_id: 'CODEX_WORK_DESKTOP', turns: 1 }, { client_id: 'CODEX_CLI', turns: 2 }, { client_id: 'CODEX_IDE_VSCODE', turns: 1 }, { client_id: 'CODEX_WEB', turns: 1 }, { client_id: 'CODEX_WORK_WEB', turns: 1 }, { client_id: 'CODEX_WORK_MOBILE', turns: 1 }, { client_id: 'CODEX_GITHUB', turns: 1 }] },
+    { date: '2026-10-27', totals: { turns: 0 }, models: [{ model: 'gpt-6.1-sol', turns: 0 }], clients: [{ client_id: 'CODEX_CLI', turns: 0 }] },
+  ],
+} });
+async function messagesRegion(page) {
+  await page.getByRole('tab', { name: 'Analytics', exact: true }).click();
+  const region = page.getByRole('region', { name: 'Messages', exact: true });
+  assert.equal(await region.count(), 1, 'Analytics exposes an independent labelled Messages region');
+  return region;
+}
+
+test('messages: range subtotal remains qualified when another supplied day has wholly unknown counts', async t => {
+  const next = messagesSnapshot();
+  next.messages.data = [
+    { date: '2026-10-26', totals: { turns: 10 }, models: [{ model: 'gpt-6.1-sol', turns: 10 }], clients: [{ client_id: 'CODEX_CLI', turns: 10 }] },
+    { date: '2026-10-27', totals: { turns: null }, models: [{ model: 'gpt-6.1-sol', turns: null }], clients: [{ client_id: 'CODEX_CLI', turns: null }] },
+  ];
+  const page = await pageFor(t, next);
+  const region = await messagesRegion(page);
+  const total = region.locator('.quota-value');
+  assert.match(await total.innerText(), /\b10\b/);
+  assert.match(await total.innerText(), /known subtotal|partial/i, 'An unknown supplied day prevents claiming a complete reported range total');
+  assert.doesNotMatch(await total.innerText(), /reported total/i);
+  const days = region.getByRole('combobox', { name: 'Day details', exact: true });
+  assert.ok(!(await days.locator('option').allTextContents()).some(label => label.includes('2026.10.27')), 'Unknown day is not fabricated as an inspectable zero');
+  await days.selectOption({ label: '2026.10.26' });
+  assert.match(await region.getByRole('region', { name: 'Day details', exact: true }).innerText(), /\b10\b/);
+});
+
+test('messages: nine grouped series have distinct visual keys repeated in their legend swatches', async t => {
+  const next = messagesSnapshot();
+  const models = Array.from({ length: 9 }, (_, index) => ({ model: `test-model-${index + 1}`, turns: index + 1 }));
+  next.messages.data = ['2026-10-25', '2026-10-26'].map(date => ({ date, totals: { turns: 45 }, models, clients: [] }));
+  const page = await pageFor(t, next);
+  const region = await messagesRegion(page);
+  const keys = await region.evaluate(node => {
+    const pattern = style => style.strokeDasharray !== 'none' && !/^0(?:px)?$/.test(style.strokeDasharray) ? 'patterned' : 'solid';
+    const paths = [...node.querySelectorAll('svg path, svg polyline')];
+    const lines = paths.slice(1).map(path => { const style = getComputedStyle(path); return { color: style.stroke, pattern: pattern(style) }; });
+    const legend = [...node.querySelectorAll('.usage-legend li')].filter(item => item.textContent.startsWith('test-model-')).map(item => {
+      const swatch = item.querySelector('.usage-swatch');
+      const mark = swatch?.querySelector('path, line, polyline') ?? swatch;
+      if (!mark) return null;
+      const style = getComputedStyle(mark);
+      const svg = mark.namespaceURI === 'http://www.w3.org/2000/svg';
+      const border = ['dashed', 'dotted'].includes(style.borderTopStyle);
+      return { color: svg ? style.stroke : border ? style.borderTopColor : style.backgroundColor,
+        pattern: svg ? pattern(style) : border || style.backgroundImage !== 'none' ? 'patterned' : 'solid' };
+    });
+    return { lines, legend };
+  });
+  assert.equal(keys.lines.length, 9, 'All nine supplied groups have visible lines in addition to the total');
+  assert.equal(new Set(keys.lines.map(key => JSON.stringify(key))).size, 9, 'Every group has a distinguishable color and line-pattern combination');
+  assert.equal(keys.legend.length, 9, 'Every supplied group has a labelled legend swatch');
+  assert.deepEqual(keys.legend, keys.lines, 'Legend swatches repeat the corresponding line colors and solid/patterned distinction');
+  const days = region.getByRole('combobox', { name: 'Day details', exact: true });
+  assert.ok((await days.boundingBox()).height >= 40);
+  await days.selectOption({ label: '2026.10.26' });
+  const detail = await region.getByRole('region', { name: 'Day details', exact: true }).innerText();
+  for (const row of models) assert.match(detail, new RegExp(`${row.model}[^\\n]*\\b${row.turns}\\b`));
+});
+
+test('messages: isolated points keep nine distinct visual keys and matching legend markers across unknown gaps', async t => {
+  const next = messagesSnapshot();
+  const models = Array.from({ length: 9 }, (_, index) => ({ model: `sparse-model-${index + 1}`, turns: index + 1 }));
+  next.messages.data = [
+    { date: '2026-10-25', totals: { turns: null }, models: models.map(row => ({ ...row, turns: null })), clients: [] },
+    { date: '2026-10-26', totals: { turns: 45 }, models, clients: [] },
+    { date: '2026-10-27', totals: { turns: null }, models: models.map(row => ({ ...row, turns: null })), clients: [] },
+  ];
+  const page = await pageFor(t, next);
+  const region = await messagesRegion(page);
+  const keys = await region.evaluate(node => {
+    const shapes = 'circle, ellipse, rect, polygon, path, use';
+    const isPoint = mark => !['path'].includes(mark.tagName) || mark.querySelector('title') || /z/i.test(mark.getAttribute('d') ?? '');
+    const visualKey = mark => {
+      if (!mark) return null;
+      const style = getComputedStyle(mark);
+      return { shape: mark.tagName, fill: style.fill, stroke: style.stroke,
+        strokeWidth: style.stroke === 'none' ? null : style.strokeWidth,
+        strokePattern: style.stroke === 'none' ? null : style.strokeDasharray,
+        rounded: mark.getAttribute('rx'), reference: mark.getAttribute('href') };
+    };
+    const chart = node.querySelector('svg.usage-chart');
+    const points = [...chart.querySelectorAll(shapes)].filter(isPoint).slice(1).map(visualKey);
+    const legend = [...node.querySelectorAll('.usage-legend li')].filter(item => item.textContent.startsWith('sparse-model-')).map(item =>
+      visualKey([...item.querySelectorAll(`.usage-swatch ${shapes.split(', ').join(', .usage-swatch ')}`)].find(isPoint)));
+    return { points, legend };
+  });
+  assert.equal(keys.points.length, 9, 'Each supplied model has a visible isolated point in addition to the total');
+  assert.notDeepEqual(keys.points[0], keys.points[8], 'First and ninth points differ visibly even when no connecting line can show its dash');
+  assert.equal(new Set(keys.points.map(key => JSON.stringify(key))).size, 9, 'All isolated series have distinguishable color/shape/fill/stroke keys');
+  assert.equal(keys.legend.length, 9, 'Every sparse series retains a labelled legend');
+  assert.ok(keys.legend.every(Boolean), 'Every legend swatch displays its point marker');
+  assert.deepEqual(keys.legend, keys.points, 'Legend markers repeat the point appearance rather than only an invisible line dash');
+  const days = region.getByRole('combobox', { name: 'Day details', exact: true });
+  assert.ok((await days.boundingBox()).height >= 40);
+  await days.selectOption({ label: '2026.10.26' });
+  const detail = await region.getByRole('region', { name: 'Day details', exact: true }).innerText();
+  for (const row of models) assert.match(detail, new RegExp(`${row.model}[^\\n]*\\b${row.turns}\\b`));
+});
+
+test('messages: inline multiline count chart follows Usage history and shows exact model/surface day values', async t => {
+  const page = await pageFor(t, messagesSnapshot());
+  const region = await messagesRegion(page);
+  assert.deepEqual(await page.getByRole('tab').allTextContents(), ['Overview', 'Analytics']);
+  const headings = await page.getByRole('tabpanel').getByRole('heading').allTextContents();
+  assert.ok(headings.indexOf('Usage history') < headings.indexOf('Messages'));
+  assert.ok(headings.indexOf('Messages') < headings.indexOf('All-time statistics'));
+  const chart = region.locator('svg').first();
+  assert.equal(await chart.count(), 1);
+  assert.ok(await chart.locator('path, polyline').count() >= 2, 'Multiple grouped lines are drawn');
+  assert.match(await chart.textContent(), /10\.26/);
+  const ticks = await chart.locator('text[x="30"][text-anchor="end"]').allTextContents();
+  assert.ok(ticks.length >= 2 && ticks.every(text => /^\d+$/.test(text)), 'Count axis has at least two integer ticks');
+  assert.match(await region.innerText(), /Messages[\s\S]*14/);
+  const group = region.getByRole('combobox', { name: 'Group by', exact: true });
+  assert.equal(await group.locator('option:checked').innerText(), 'By model');
+  const days = region.getByRole('combobox', { name: 'Day details', exact: true });
+  await days.selectOption({ label: '2026.10.26' });
+  let detail = region.getByRole('region', { name: 'Day details', exact: true });
+  assert.match(await detail.innerText(), /2026\.10\.26[\s\S]*10\s*(?:messages)?/i);
+  assert.match(await detail.innerText(), /gpt-6\.1-sol[^\n]*4/);
+  assert.match(await detail.innerText(), /gpt-6-luna[^\n]*2/);
+  assert.match(await detail.innerText(), /Other[^\n]*4/, 'Auto-review, other and positive ungrouped remainder are combined once');
+  await group.selectOption({ label: 'By surface' });
+  detail = region.getByRole('region', { name: 'Day details', exact: true });
+  for (const [label, count] of [['Desktop', 3], ['CLI', 2], ['VS Code', 1], ['Web', 1], ['Web (Work)', 1], ['Mobile', 1], ['Code review', 1]]) {
+    assert.ok((await detail.innerText()).split('\n').some(line => line.includes(label) && new RegExp(`\\b${count}\\b`).test(line)), `${label} has its supplied count`);
+  }
+  assert.equal(await page.evaluate(() => window.probe.messagesCalls.length), 0, 'Grouping and day inspection are local');
+});
+
+test('messages: range/group/day state is independent of History and token scroll, survives updates/tabs, resets on remount', async t => {
+  const next = messagesSnapshot();
+  const page = await pageFor(t, next);
+  let region = await messagesRegion(page);
+  assert.equal(await region.getByRole('button', { name: '7 days', exact: true }).getAttribute('aria-pressed'), 'true');
+  assert.equal(await region.getByRole('button', { name: 'Next', exact: true }).isDisabled(), true);
+  const history = page.getByRole('region', { name: 'Usage history', exact: true });
+  await history.getByRole('combobox', { name: 'Group by', exact: true }).selectOption({ label: 'By model' });
+  await history.getByRole('combobox', { name: 'Day details', exact: true }).selectOption({ label: '2026.10.26' });
+  const scroll = page.locator('.heatmap-scroll').first();
+  await scroll.evaluate(node => { node.scrollLeft = 31; });
+  const savedScroll = await scroll.evaluate(node => node.scrollLeft);
+  await region.getByRole('button', { name: 'Previous', exact: true }).click();
+  assert.deepEqual(await page.evaluate(() => window.probe.messagesCalls.at(-1)), { startDate: '2026-10-14', endDate: '2026-10-20' });
+  await region.getByRole('button', { name: '30 days', exact: true }).click();
+  assert.deepEqual(await page.evaluate(() => window.probe.messagesCalls.at(-1)), { startDate: '2026-09-28', endDate: '2026-10-27' });
+  await region.getByRole('button', { name: 'Previous', exact: true }).click();
+  assert.deepEqual(await page.evaluate(() => window.probe.messagesCalls.at(-1)), { startDate: '2026-08-29', endDate: '2026-09-27' });
+  await region.getByRole('button', { name: 'Next', exact: true }).click();
+  assert.equal(await region.getByRole('button', { name: 'Next', exact: true }).isDisabled(), true);
+  await region.getByRole('combobox', { name: 'Group by', exact: true }).selectOption({ label: 'By surface' });
+  await region.getByRole('combobox', { name: 'Day details', exact: true }).selectOption({ label: '2026.10.26' });
+  next.messages = { ...next.messages, startDate: '2026-09-28', endDate: '2026-10-27' };
+  await page.evaluate(state => window.probe.publish(state), next);
+  await page.getByRole('tab', { name: 'Overview', exact: true }).click();
+  region = await messagesRegion(page);
+  assert.equal(await region.getByRole('button', { name: '30 days', exact: true }).getAttribute('aria-pressed'), 'true');
+  assert.equal(await region.getByRole('combobox', { name: 'Group by', exact: true }).locator('option:checked').innerText(), 'By surface');
+  assert.match(await region.getByRole('region', { name: 'Day details', exact: true }).innerText(), /2026\.10\.26/);
+  assert.equal(await history.getByRole('button', { name: '7 days', exact: true }).getAttribute('aria-pressed'), 'true');
+  assert.equal(await history.getByRole('combobox', { name: 'Group by', exact: true }).locator('option:checked').innerText(), 'By model');
+  assert.match(await history.getByRole('region', { name: 'Day details', exact: true }).innerText(), /2026\.10\.26/);
+  assert.equal(await scroll.evaluate(node => node.scrollLeft), savedScroll);
+  assert.equal(await page.getByRole('group', { name: 'History period', exact: true }).getByRole('button', { name: 'Year', exact: true }).getAttribute('aria-pressed'), 'true');
+  await page.evaluate(async () => { window.probe.close(); await window.probe.mount(); });
+  region = await messagesRegion(page);
+  assert.equal(await region.getByRole('button', { name: '7 days', exact: true }).getAttribute('aria-pressed'), 'true');
+  assert.equal(await region.getByRole('combobox', { name: 'Group by', exact: true }).locator('option:checked').innerText(), 'By model');
+  assert.match(await region.innerText(), /2026\.10\.21[\s\S]*2026\.10\.27/);
+});
+
+test('messages: native day details preserves zero, unknown/partial counts and excess groups without negative Other', async t => {
+  const next = messagesSnapshot();
+  next.messages.data = [
+    { date: '2026-10-23', totals: { turns: null }, models: [{ model: 'gpt-6.1-sol', turns: null }], clients: [] },
+    { date: '2026-10-24', totals: { turns: null }, models: [{ model: 'gpt-6.1-sol', turns: 2 }, { model: 'gpt-6-luna', turns: null }], clients: [] },
+    { date: '2026-10-25', totals: { turns: 2 }, models: [{ model: 'gpt-6.1-sol', turns: 4 }], clients: [] },
+    next.messages.data.at(-1),
+  ];
+  const page = await pageFor(t, next, 'Europe/Moscow', { viewport: { width: 320, height: 900 } });
+  const region = await messagesRegion(page);
+  const days = region.getByRole('combobox', { name: 'Day details', exact: true });
+  assert.equal(await days.evaluate(node => node.tagName), 'SELECT');
+  const box = await days.boundingBox();
+  assert.ok(box && box.height >= 40 && box.width >= 24);
+  await days.focus();
+  assert.equal(await days.evaluate(node => node === document.activeElement), true);
+  await days.selectOption({ label: '2026.10.27' });
+  const detail = region.getByRole('region', { name: 'Day details', exact: true });
+  assert.match(await detail.innerText(), /\b0\b/);
+  assert.doesNotMatch(await days.locator('option').allTextContents().then(items => items.join('\n')), /2026\.10\.26/, 'Missing day has no fabricated zero detail');
+  await days.selectOption({ label: '2026.10.24' });
+  assert.match(await detail.innerText(), /\b2\b/);
+  assert.match(await detail.innerText(), /known|subtotal|partial|incomplete|missing/i);
+  await days.selectOption({ label: '2026.10.25' });
+  assert.match(await detail.innerText(), /gpt-6\.1-sol[^\n]*4/);
+  assert.match(await detail.innerText(), /differ|exceed|discrepan|inconsistent/i);
+  assert.doesNotMatch(await detail.innerText(), /Other[^\n]*-2/);
+  assert.match(await region.innerText(), /data as of[^\n]*unknown/i);
+  next.messages = { ...next.messages, stale: true, error: 'Messages unavailable' };
+  await page.evaluate(state => window.probe.publish(state), next);
+  assert.match(await region.innerText(), /stale/i);
+  assert.match(await region.innerText(), /unavailable/i);
+  next.messages = { ...next.messages, stale: false, error: null, data: [] };
+  await page.evaluate(state => window.probe.publish(state), next);
+  assert.match(await region.innerText(), /no messages|no data|empty/i);
+  assert.equal(await page.getByRole('heading', { name: 'Daily', exact: true }).count(), 1);
+});
+
+test('messages: reversed card requests plus full refresh settle both cards and preserve the newer values', async t => {
+  const next = messagesSnapshot();
+  const page = await pageFor(t, next);
+  const region = await messagesRegion(page);
+  const history = page.getByRole('region', { name: 'Usage history', exact: true });
+  await page.evaluate(() => { window.probe.deferNextHistory(); window.probe.deferNextMessages(); });
+  await history.getByRole('button', { name: 'Previous', exact: true }).click();
+  await region.getByRole('button', { name: 'Previous', exact: true }).click();
+  await page.waitForFunction(() => typeof window.probe.resolveHistory === 'function' && typeof window.probe.resolveMessages === 'function');
+  assert.match(await history.innerText(), /loading/i);
+  assert.match(await region.innerText(), /loading/i);
+  next.history = { ...next.history, startDate: '2026-10-14', endDate: '2026-10-20', data: [{ date: '2026-10-19', attribution: [{ model: 'gpt-6.1-sol', value: 17 }] }] };
+  next.messages = { ...next.messages, startDate: '2026-10-14', endDate: '2026-10-20', data: [{ date: '2026-10-19', totals: { turns: 19 }, models: [{ model: 'gpt-6.1-sol', turns: 19 }], clients: [] }] };
+  try {
+    await page.evaluate(async state => { window.probe.publish(state); await window.probe.tick(); }, next);
+    assert.doesNotMatch(await region.innerText(), /loading/i);
+    assert.doesNotMatch(await history.innerText(), /loading/i);
+    assert.deepEqual(await page.evaluate(() => window.probe.refreshInputs.at(-1)), { historyRange: { startDate: '2026-10-14', endDate: '2026-10-20' }, messagesRange: { startDate: '2026-10-14', endDate: '2026-10-20' } });
+    await page.evaluate(async () => { window.probe.resolveMessages({ verified: false }); await Promise.resolve(); window.probe.resolveHistory({ verified: false }); await Promise.resolve(); });
+    assert.doesNotMatch(await region.innerText(), /loading|unavailable/i);
+    assert.doesNotMatch(await history.innerText(), /loading|unavailable/i);
+    await region.getByRole('combobox', { name: 'Day details', exact: true }).selectOption({ label: '2026.10.19' });
+    assert.match(await region.getByRole('region', { name: 'Day details', exact: true }).innerText(), /\b19\b/);
+  } finally {
+    await page.evaluate(() => { window.probe.resolveHistory?.({ verified: false }); window.probe.resolveMessages?.({ verified: false }); });
+  }
+});
+
 test('history: first Analytics chart groups source usage with exact pointer and keyboard values and share legend', async t => {
   const page = await pageFor(t, historySnapshot());
   const region = await historyRegion(page);

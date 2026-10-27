@@ -171,6 +171,37 @@ function usageHistoryReport(body, range) {
   return { units: body.units, data, dataAsOf: null };
 }
 
+function messagesReport(body, range) {
+  if (!object(body) || !Array.isArray(body.data)) throw new Error('Invalid messages');
+  const count = turns => {
+    if (turns == null) return null;
+    if (!Number.isInteger(turns) || turns < 0) throw new Error('Invalid message count');
+    return turns;
+  };
+  const data = body.data.map(day => {
+    if (!object(day) || !validDate(day.date)) throw new Error('Invalid messages date');
+    const normalized = { date: day.date, totals: { turns: count(day.totals?.turns) } };
+    for (const [field, name] of [['models', 'model'], ['clients', 'client_id']]) {
+      if (day[field] != null && !Array.isArray(day[field])) throw new Error('Invalid message groups');
+      normalized[field] = (day[field] ?? []).map(group => {
+        if (!object(group) || typeof group[name] !== 'string') throw new Error('Invalid message group');
+        return { [name]: value(group[name]).trim(), turns: count(group.turns) };
+      });
+    }
+    return normalized;
+  }).filter(day => day.date >= range.startDate && day.date <= range.endDate).sort((first, second) => first.date.localeCompare(second.date));
+  return { data, dataAsOf: null };
+}
+
+function bounded(promise, signal) {
+  return new Promise((resolve, reject) => {
+    const aborted = () => reject(new Error('Cancelled'));
+    if (signal.aborted) { aborted(); return; }
+    signal.addEventListener('abort', aborted, { once: true });
+    Promise.resolve(promise).then(resolve, reject).finally(() => signal.removeEventListener('abort', aborted));
+  });
+}
+
 export default function codexUsage(pi, services = {}) {
   const fetch = services.fetch ?? globalThis.fetch;
   const setInterval = services.setInterval ?? globalThis.setInterval;
@@ -180,23 +211,30 @@ export default function codexUsage(pi, services = {}) {
   let visible = false;
   let timer;
   let generation = 0;
-  let running;
+  let authWork;
+  const sourceRequests = new Map();
   let identity;
   let sections = {};
-  let historyRange = latestHistoryRange(now());
-  let historySection;
+  let detailsInitialized = false;
+  const cards = {
+    History: { range: latestHistoryRange(now()), version: 0, section: undefined },
+    Messages: { range: latestHistoryRange(now()), version: 0, section: undefined },
+  };
   let reportState;
   let sessionContext;
 
   function snapshot(authMessage) {
     const limits = sections.Limits;
     const analytics = sections.Analytics;
+    const history = cards.History;
+    const messages = cards.Messages;
     const left = limits?.windows[0]?.leftPercent;
     return {
       summary: left == null ? 'Codex usage · unavailable' : `Codex usage · ${left}% left`,
       overview: { metrics: limits?.metrics ?? [], windows: limits?.windows ?? [], updatedAt: limits?.at ?? null, stale: limits?.stale ?? false, error: authMessage ?? limits?.error ?? (limits ? null : 'Limits unavailable') },
       analytics: { metrics: analytics?.metrics ?? [], invocations: analytics?.invocations ?? [], daily: analytics?.daily ?? [], cumulative: analytics?.cumulative ?? [], weekly: analytics?.weekly ?? [], updatedAt: analytics?.at ?? null, stale: analytics?.stale ?? false, error: authMessage ?? analytics?.error ?? (analytics ? null : 'Analytics unavailable') },
-      history: { ...historyRange, units: historySection?.units ?? null, data: historySection?.data ?? [], dataAsOf: historySection?.dataAsOf ?? null, updatedAt: historySection?.at ?? null, stale: historySection?.stale ?? false, error: authMessage ?? historySection?.error ?? (historySection ? null : 'Usage history unavailable') },
+      history: { ...history.range, units: history.section?.units ?? null, data: history.section?.data ?? [], dataAsOf: history.section?.dataAsOf ?? null, updatedAt: history.section?.at ?? null, stale: history.section?.stale ?? false, error: authMessage ?? history.section?.error ?? (history.section ? null : 'Usage history unavailable') },
+      messages: { ...messages.range, data: messages.section?.data ?? [], dataAsOf: messages.section?.dataAsOf ?? null, updatedAt: messages.section?.at ?? null, stale: messages.section?.stale ?? false, error: authMessage ?? messages.section?.error ?? (messages.section ? null : 'Messages unavailable') },
     };
   }
 
@@ -210,21 +248,31 @@ export default function codexUsage(pi, services = {}) {
         env.provide(CodexUsageDetails, {
           state: reportState,
           async refresh(input = {}) {
-            return { verified: sessionContext ? await refresh(sessionContext, { history: true, range: input.historyRange }) === true : false };
+            return { verified: sessionContext ? await refresh(sessionContext, { details: true, historyRange: input.historyRange, messagesRange: input.messagesRange }) === true : false };
           },
           async refreshHistory(range) {
             const selected = validateHistoryRange(range);
-            return { verified: sessionContext ? await refresh(sessionContext, { history: true, onlyHistory: true, range: selected }) === true : false };
+            return { verified: sessionContext ? await refresh(sessionContext, { details: true, card: 'History', historyRange: selected }) === true : false };
+          },
+          async refreshMessages(range) {
+            const selected = validateHistoryRange(range);
+            return { verified: sessionContext ? await refresh(sessionContext, { details: true, card: 'Messages', messagesRange: selected }) === true : false };
           },
         });
       },
     }),
   });
 
-  function clear(ctx) {
+  function invalidateRequests() {
     generation++;
-    running?.controller.abort();
-    running = undefined;
+    authWork?.controller.abort();
+    authWork = undefined;
+    for (const work of sourceRequests.values()) work.controller.abort();
+    sourceRequests.clear();
+  }
+
+  function clear(ctx) {
+    invalidateRequests();
     clearInterval(timer);
     timer = undefined;
     ctx.ui.setWidget(key, undefined);
@@ -253,55 +301,34 @@ export default function codexUsage(pi, services = {}) {
     ctx.ui.setStatus(key, report.summary);
   }
 
-  function refresh(ctx, options = {}) {
-    if (options.range) {
-      const selected = validateHistoryRange(options.range);
-      if (selected.startDate !== historyRange.startDate || selected.endDate !== historyRange.endDate) {
-        generation++;
-        running?.controller.abort();
-        running = undefined;
-        historyRange = selected;
-        historySection = undefined;
-      }
-    }
-    if (running) {
-      if (options.history && !running.history) return running.promise.then(verified => verified ? refresh(ctx, { history: true, onlyHistory: true }) : false);
-      return running.promise;
-    }
-    const work = { controller: new AbortController(), generation, history: options.history };
-    running = work;
-    const current = () => generation === work.generation;
+  function authenticationUnavailable(ctx, message) {
+    invalidateRequests();
+    identity = undefined;
+    sections = {};
+    detailsInitialized = false;
+    for (const card of Object.values(cards)) card.section = undefined;
+    render(ctx, message);
+  }
+
+  function resolveAuth(ctx) {
+    if (authWork) return authWork.promise;
+    const work = { controller: new AbortController(), generation };
+    authWork = work;
     const signal = work.controller.signal;
     const timeout = setTimeout(() => work.controller.abort(), timeoutMs);
-    function bounded(promise) {
-      return new Promise((resolve, reject) => {
-        const aborted = () => reject(new Error('Cancelled'));
-        if (signal.aborted) { aborted(); return; }
-        signal.addEventListener('abort', aborted, { once: true });
-        Promise.resolve(promise).then(resolve, reject).finally(() => signal.removeEventListener('abort', aborted));
-      });
-    }
     work.promise = (async () => {
       let resolved;
       try {
-        resolved = await bounded(ctx.modelRegistry.getProviderAuth('openai-codex'));
+        resolved = await bounded(ctx.modelRegistry.getProviderAuth('openai-codex'), signal);
       } catch {
-        if (current()) {
-          identity = undefined;
-          sections = {};
-          historySection = undefined;
-          render(ctx, 'Pi authentication unavailable; sign in and refresh');
-        }
-        return false;
+        if (generation === work.generation) authenticationUnavailable(ctx, 'Pi authentication unavailable; sign in and refresh');
+        return;
       }
-      if (!current() || signal.aborted) return false;
+      if (generation !== work.generation || signal.aborted) return;
       const provider = ctx.modelRegistry.getProvider('openai-codex');
       if (!resolved?.auth?.apiKey || !ctx.modelRegistry.isUsingOAuth({ provider: 'openai-codex' }) || !official(provider?.baseUrl) || (resolved.auth.baseUrl && !official(resolved.auth.baseUrl))) {
-        identity = undefined;
-        sections = {};
-        historySection = undefined;
-        render(ctx, 'Official Pi OAuth authentication unavailable');
-        return false;
+        authenticationUnavailable(ctx, 'Official Pi OAuth authentication unavailable');
+        return;
       }
       const headers = new Headers(resolved.auth.headers);
       headers.set('authorization', `Bearer ${resolved.auth.apiKey}`);
@@ -315,56 +342,100 @@ export default function codexUsage(pi, services = {}) {
         } catch {}
       }
       if (!account) {
-        identity = undefined;
-        sections = {};
-        historySection = undefined;
-        render(ctx, 'Pi OAuth account identity unavailable; sign in and refresh');
-        return false;
+        authenticationUnavailable(ctx, 'Pi OAuth account identity unavailable; sign in and refresh');
+        return;
       }
       headers.set('chatgpt-account-id', account);
-      const accountChanged = account !== identity;
-      if (accountChanged) {
+      if (account !== identity) {
+        invalidateRequests();
         sections = {};
-        historySection = undefined;
+        for (const card of Object.values(cards)) card.section = undefined;
+        detailsInitialized = false;
         identity = account;
         render(ctx);
       }
-      const sources = options.onlyHistory && !accountChanged ? [] : [['usage', 'Limits', limitsReport], ['profiles/me', 'Analytics', analyticsReport]];
-      if (options.history) sources.push(['usage/daily-token-usage-breakdown', 'History', usageHistoryReport]);
-      const range = { ...historyRange };
-      await Promise.all(sources.map(async ([path, title, format]) => {
+      return { headers, generation };
+    })().finally(() => {
+      clearTimeout(timeout);
+      if (authWork === work) authWork = undefined;
+    });
+    return work.promise;
+  }
+
+  function readSource(auth, path, title, format, deadline) {
+    if (sourceRequests.has(title)) return sourceRequests.get(title).promise;
+    const card = cards[title];
+    const range = card ? { ...card.range } : undefined;
+    const version = card?.version;
+    const work = { controller: new AbortController(), generation: auth.generation };
+    sourceRequests.set(title, work);
+    const signal = work.controller.signal;
+    const current = () => generation === work.generation && (!card || card.version === version);
+    const timeout = setTimeout(() => work.controller.abort(), Math.max(0, deadline - Date.now()));
+    work.promise = (async () => {
         try {
           const url = new URL(`${origin}/backend-api/wham/${path}`);
-          const requestHeaders = new Headers(headers);
-          if (title === 'History') {
-            url.search = new URLSearchParams({ start_date: range.startDate, end_date: range.endDate, group_by: 'day' }).toString();
-            requestHeaders.set('x-openai-codex-usage-categories', '1');
+          const requestHeaders = new Headers(auth.headers);
+          if (card) {
+            const parameters = { start_date: range.startDate, end_date: range.endDate, group_by: 'day' };
+            if (title === 'Messages') parameters.workspace_user = 'true';
+            else requestHeaders.set('x-openai-codex-usage-categories', '1');
+            url.search = new URLSearchParams(parameters).toString();
           }
-          const response = await bounded(fetch(url.href, { method: 'GET', headers: requestHeaders, redirect: 'error', signal }));
+          const response = await bounded(fetch(url.href, { method: 'GET', headers: requestHeaders, redirect: 'error', signal }), signal);
           if (!response.ok) throw new Error('Unavailable');
-          const report = format(await bounded(response.json()), range);
+          const report = format(await bounded(response.json(), signal), range);
           if (current() && !signal.aborted) {
             const section = { ...report, at: now(), stale: false, error: null };
-            if (title === 'History') historySection = section;
+            if (card) card.section = section;
             else sections[title] = section;
           }
         } catch {
           if (current()) {
-            const section = title === 'History' ? historySection : sections[title];
+            const section = card ? card.section : sections[title];
             if (section) {
               section.stale = true;
               section.error = title === 'History' ? 'Usage history unavailable' : `${title} unavailable`;
             }
           }
         }
-      }));
-      if (current()) render(ctx);
-      return current();
     })().finally(() => {
       clearTimeout(timeout);
-      if (running === work) running = undefined;
+      if (sourceRequests.get(title) === work) sourceRequests.delete(title);
     });
     return work.promise;
+  }
+
+  async function refresh(ctx, options = {}) {
+    const selected = {
+      History: options.historyRange && validateHistoryRange(options.historyRange),
+      Messages: options.messagesRange && validateHistoryRange(options.messagesRange),
+    };
+    for (const [title, range] of Object.entries(selected)) {
+      const card = cards[title];
+      if (range && (range.startDate !== card.range.startDate || range.endDate !== card.range.endDate)) {
+        card.version++;
+        sourceRequests.get(title)?.controller.abort();
+        sourceRequests.delete(title);
+        card.range = range;
+        card.section = undefined;
+      }
+    }
+    const versions = { History: cards.History.version, Messages: cards.Messages.version };
+    const deadline = Date.now() + timeoutMs;
+    const auth = await resolveAuth(ctx);
+    const current = () => auth && auth.generation === generation && (!options.details || Object.keys(cards).every(title => options.card && options.card !== title || cards[title].version === versions[title]));
+    if (!current()) return false;
+    const hydrateDetails = options.details && !detailsInitialized;
+    const sources = !options.card || hydrateDetails ? [['usage', 'Limits', limitsReport], ['profiles/me', 'Analytics', analyticsReport]] : [];
+    if (options.details) {
+      if (!options.card || hydrateDetails || options.card === 'History') sources.push(['usage/daily-token-usage-breakdown', 'History', usageHistoryReport]);
+      if (!options.card || hydrateDetails || options.card === 'Messages') sources.push(['analytics/daily-workspace-usage-counts', 'Messages', messagesReport]);
+      detailsInitialized = true;
+    }
+    await Promise.all(sources.map(([path, title, format]) => readSource(auth, path, title, format, deadline)));
+    if (auth.generation === generation) render(ctx);
+    return Boolean(current());
   }
 
   function start(ctx) {
@@ -401,8 +472,12 @@ export default function codexUsage(pi, services = {}) {
     if (_event.type !== 'session_tree') {
       identity = undefined;
       sections = {};
-      historyRange = latestHistoryRange(now());
-      historySection = undefined;
+      detailsInitialized = false;
+      for (const card of Object.values(cards)) {
+        card.range = latestHistoryRange(now());
+        card.section = undefined;
+        card.version++;
+      }
     }
     visible = ctx.sessionManager.getBranch().filter(entry => entry.type === 'custom' && entry.customType === visibilityType).at(-1)?.data?.visible === true;
     render(ctx);

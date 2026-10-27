@@ -1,6 +1,6 @@
 # Codex Usage
 
-Codex quotas in a compact native dock, with usage history and a graphical report in the right
+Codex quotas in a compact native dock, with usage history, message counts and a graphical report in the right
 workbench. A standalone extension for vanilla **pi-gui 1.0.1**, whose bundled
 Pi SDK is 0.87.1. All frontend assets ship ready to use; no build or manual
 settings are required.
@@ -44,7 +44,7 @@ current compact widget; changed output may show it again. Use the Hide command
 for durable hiding.
 
 The right report has two keyboard-accessible tabs: **Overview** for graphical
-quota meters and supplied account details, and **Analytics** for Usage history, all-time metrics,
+quota meters and supplied account details, and **Analytics** for Usage history, Messages, all-time metrics,
 invocation details and daily, cumulative and weekly charts with calendar heatmaps. Close it
 with the native workbench control; Hide affects compact only. A mounted report
 refreshes on entry and every three minutes. Closing/disposal stops its frontend
@@ -76,8 +76,38 @@ The source currently supplies no freshness timestamp, so **Data as of** says
 Empty data, source errors and retained stale values have separate feedback.
 Only the current account and selected range can reuse last-good history; changing
 the range requests history alone when the account is unchanged. If Pi resolves a
-different account, that refresh also reloads its subscription limits and token
-profile. Compact refreshes continue to request only those two sources.
+different account, that refresh also reloads its subscription limits, token
+profile and Messages. Compact refreshes continue to request only limits and the
+token profile.
+
+### Messages
+
+The Messages line chart follows Usage history. It displays the server's daily
+message counts (`turns`) with independent **7 days / 30 days** and **Previous /
+Next** controls. It defaults to seven inclusive local calendar days and **By
+model**; **By surface** uses the same cached counts. Changing its range requests
+only Messages for the same account. Both cards can refresh independently without
+changing each other's range or the token calendars.
+
+Use the native **Day details** selector for an exact dated total and grouped
+counts. It remains usable in narrow panes. Selected dates, ranges and grouping
+survive tab changes and live updates; dates outside the chosen range clear, and
+reopening restores the defaults. Usage history has its own Day details selector.
+
+Desktop combines the desktop app and Work desktop; the other supplied surfaces
+are CLI, VS Code, Web, Web (Work), Mobile and Code review. Unknown source names
+remain readable. The model group **Other** combines auto-review, explicit other
+models and any positive remainder between the reported total and known groups.
+If groups exceed the reported total, exact counts remain visible with a
+discrepancy note; no negative remainder is invented. Missing counts remain
+unknown, known subtotals are labelled, and explicit zero stays zero. The chart
+does not fabricate a zero for a missing day.
+
+Messages has its own local successful-fetch time, stale/error feedback and
+account/range cache. **Data as of** remains unknown when the source supplies no
+freshness timestamp. The card contains counts only, without token, credit or
+user-count fields. Account changes clear all four report sources and the next
+public refresh reloads them, including when compact discovered the new account.
 
 ### Token calendars
 
@@ -127,7 +157,7 @@ quota percentage is `100 − used percentage`. Other metrics come directly from
 the server: the extension does not estimate subscription token costs or invent
 token totals, reset credits or analytics endpoints.
 
-Limits and analytics keep separate last-success timestamps in memory. A failed,
+Limits, token analytics, Usage history and Messages keep separate last-success timestamps in memory. A failed,
 timed-out or malformed source update leaves its previous report marked **stale**,
 while a successful source can still update. Stale data is retained only after Pi
 successfully resolves the same current account using its `ChatGPT-Account-Id`
@@ -155,12 +185,18 @@ The extension makes only authenticated GET requests to:
 https://chatgpt.com/backend-api/wham/usage
 https://chatgpt.com/backend-api/wham/profiles/me
 https://chatgpt.com/backend-api/wham/usage/daily-token-usage-breakdown
+https://chatgpt.com/backend-api/wham/analytics/daily-workspace-usage-counts
 ```
 
 History sends the selected `start_date`, `end_date`, `group_by=day` query and the
 `x-openai-codex-usage-categories: 1` request header. Only sanitized dates, usage
 amounts and attribution dimensions enter the report; per-model credit metadata
 is not added again to the attribution values.
+
+Messages sends its selected `start_date`, `end_date`, `group_by=day` and
+`workspace_user=true`. Only sanitized source dates, total message counts and
+model/client message counts enter that card. Neither card requests private
+thread contents or account mutations.
 
 It checks Pi's provider and effective auth origins before sending credentials,
 and rejects redirects. These are private ChatGPT endpoints and may change or
