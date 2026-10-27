@@ -428,3 +428,74 @@ for synthetic Chrome — **84 tests, 84 pass, 0 failed/cancelled/skipped**, exit
 `npm pack --dry-run --cache ../.npm-cache` exits 0: version 0.2.1, ten intended
 files, **17.7 kB** packed. No test edits, refactoring or behavior-change TDD
 exception. Source frozen; fresh installed Electron verification is still required.
+
+## Calendar heatmaps — GREEN (2026-10-28)
+
+Accepted RED is the completed Calendar heatmaps section and scroll-restoration
+follow-up in `RED.md`: six real-DOM calendar failures plus one behavioral failure
+losing a user-selected scroll position. The confirmed scenario/destination map
+was read before edits and the supplied GitHub calendar image was inspected.
+
+```powershell
+node --test --test-isolation=none --test-name-pattern='calendar:' test/desktop.test.js
+```
+
+`dist/desktop.js` now defaults the common period to Year (365 inclusive local
+calendar days) and adds 90 days. Daily/Cumulative show all selected dates,
+including unknown dates, in weekday rows and aligned week columns. Fixed
+Mon/Wed/Fri labels sit beside the scrolling matrix; month labels share its
+column geometry. Weekly uses one row of exact week starts/unknown weeks.
+Each calendar shows its dotted date range. A source with no buckets is omitted;
+an existing source with no buckets in the selected period still has the full
+neutral calendar and no invented chart points.
+
+Per-calendar scroll positions remain mount-local: fresh entry/period changes
+open at the latest dates, while background updates and tab returns retain the
+reader's position. Existing period keyboard focus, tooltips, touchend, null gaps,
+24px targets/14px visual squares, colors and verified-account lifecycle remain.
+`dist/desktop.css` provides fixed axes and matrix-only scrolling, fitting the
+full year in wide panes. Chart rendering was separated only as necessary to
+retain a calendar when the filtered series has no chart points.
+
+README documents the new default, axes, unknown window and scrolling behavior;
+package/lock versions are 0.2.2. No backend, auth, compact, test or host/config
+edits. No commits or publication. No behavior-change TDD exception.
+
+GREEN: focused **7 selected, 7 pass**, exit 0, primary account solely to launch
+synthetic Chrome. Full `npm test`: **91 tests, 91 pass, 0 failed/cancelled/skipped**,
+exit 0. `node --check dist/desktop.js` exits 0. Package dry run
+`npm pack --dry-run --cache ../.npm-cache` exits 0: version 0.2.2, ten intended
+files, **18.7 kB** packed. No post-GREEN refactoring. Source frozen for independent
+commands, native-host validation and role-owned reviews.
+
+## Shared-week month labels — GREEN (2026-10-28)
+
+Accepted RED in `RED.md`: three real-Chrome cases lose Sep when Oct begins in
+the same first week, including a one-column seven-day view at 320px. Exact focus:
+
+```powershell
+node --test --test-isolation=none --test-name-pattern='calendar month boundary:' test/desktop.test.js
+```
+
+`dist/desktop.js` groups month names by their week column instead of replacing
+the first name. Each remains a separate text element, stacked when sharing a
+column. `dist/desktop.css` expands that calendar's month header and matching
+weekday offset to 40px when needed; individual labels occupy 20px rows above
+the cells. No scroll, focus, data or interaction behavior was changed.
+
+The first focus passed 3/3, but the broader run found one existing semantic-label
+regression (93/94): joined text did not expose an individual January label.
+Separate stacked spans corrected it without changing tests. The combined focus
+then passed all four cases:
+
+```powershell
+node --test --test-isolation=none --test-name-pattern='calendar month boundary:|calendar: daily and cumulative month' test/desktop.test.js
+```
+
+Final full `npm test`, primary account solely for isolated synthetic Chrome —
+**94 tests, 94 pass, 0 failed/cancelled/skipped**, exit 0.
+`node --check dist/desktop.js` exits 0. Package dry run
+`npm pack --dry-run --cache ../.npm-cache` exits 0: version 0.2.2, ten intended
+files, **18.9 kB** packed. Only frontend JS/CSS and this evidence changed. No
+refactoring, test edits, commits or behavior-change TDD exception. Source frozen
+for independent/native boundary verification and design recheck.

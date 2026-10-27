@@ -56,8 +56,16 @@ svg text { fill: var(--foreground); font: 11px system-ui, sans-serif; }
 .invocations ul { margin: 0; padding-left: 18px; }
 .invocations li { padding: 6px 0; }
 .heatmap { position: relative; min-width: 0; }
-.heatmap-scroll { overflow-x: auto; padding: 5px; }
+.history-range { font-size: 12px; opacity: .8; }
+.heatmap-body { display: flex; gap: 8px; }
+.heatmap-weekdays { display: grid; grid-template-rows: var(--month-axis-height) repeat(7, 24px); flex: 0 0 30px; padding-top: 5px; font-size: 11px; }
+.heatmap-weekdays span { align-self: center; }
+.heatmap-scroll { min-width: 0; overflow-x: auto; padding: 5px; }
+.heatmap-months { display: grid; grid-template-rows: var(--month-axis-height); width: max-content; font-size: 11px; }
+.heatmap-months > div { display: grid; grid-auto-rows: 20px; align-self: start; justify-self: start; }
+.heatmap-months span { align-self: start; justify-self: start; white-space: pre; line-height: 20px; }
 .heatmap-grid { display: grid; grid-template-rows: repeat(7, 24px); grid-auto-flow: column; grid-auto-columns: 24px; width: max-content; }
+.heatmap-weekly { grid-template-rows: 24px; }
 .heatmap-cell, .heatmap-gap, .heatmap-swatch { border: 1px solid color-mix(in srgb, var(--foreground) 12%, transparent); border-radius: 2px; }
 .heatmap-cell { width: 24px; height: 24px; min-height: 0; padding: 0; border: 5px solid transparent; border-radius: 7px; }
 .heatmap-cell, .heatmap-cell:hover { background: var(--heat-color); background-clip: padding-box; }

@@ -73,11 +73,7 @@ function quota(window) {
   return card;
 }
 
-function history(title, fullSeries, period) {
-  const bounds = period === 'all' ? null : periodBounds(period);
-  const series = bounds ? fullSeries.filter(bucket => bucket.date >= bounds.start && bucket.date <= bounds.end) : fullSeries;
-  const section = element('section', null, 'history');
-  section.append(element('h3', title));
+function historyChart(title, series) {
   if (!series.length) return null;
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('viewBox', '0 0 360 140');
@@ -111,26 +107,75 @@ function history(title, fullSeries, period) {
     const x = series.length === 1 ? 197 : 46 + index / (series.length - 1) * 302;
     shape('text', { x, y: 132, 'text-anchor': index === 0 ? 'start' : index === series.length - 1 ? 'end' : 'middle' }, calendarDate(series[index].date).slice(5));
   }
+  return svg;
+}
+
+function history(title, fullSeries, period) {
+  if (!fullSeries.length) return null;
+  const bounds = period === 'all' ? { start: fullSeries[0].date, end: fullSeries.at(-1).date } : periodBounds(period);
+  const series = fullSeries.filter(bucket => bucket.date >= bounds.start && bucket.date <= bounds.end);
+  const section = element('section', null, 'history');
+  section.append(element('h3', title), element('p', `${calendarDate(bounds.start)} – ${calendarDate(bounds.end)}`, 'history-range'));
+  const chart = historyChart(title, series);
+  if (chart) section.append(chart);
   const heatmap = element('div', null, 'heatmap');
   const tooltip = element('div', '', 'heatmap-tooltip');
   tooltip.id = `usage-${title.toLowerCase()}-tooltip`;
   tooltip.setAttribute('role', 'tooltip');
   tooltip.hidden = true;
+  const body = element('div', null, 'heatmap-body');
+  const weekly = title === 'Weekly';
+  if (!weekly) {
+    const weekdays = element('div', null, 'heatmap-weekdays');
+    weekdays.append(element('span'));
+    for (const day of ['', 'Mon', '', 'Wed', '', 'Fri', '']) weekdays.append(element('span', day));
+    body.append(weekdays);
+  }
   const scroll = element('div', null, 'heatmap-scroll');
+  scroll.dataset.history = title;
+  const months = element('div', null, 'heatmap-months');
   const grid = element('div', null, 'heatmap-grid');
+  if (weekly) grid.classList.add('heatmap-weekly');
   grid.setAttribute('aria-label', `${title} supplied ${title === 'Weekly' ? 'week starts' : 'days'}`);
   const buckets = new Map(series.map(bucket => [bucket.date, bucket]));
   const maximum = Math.max(1, ...fullSeries.map(bucket => bucket.tokens ?? 0));
-  const start = new Date(`${bounds?.start ?? series[0].date}T00:00:00Z`);
-  const end = new Date(`${bounds?.end ?? series.at(-1).date}T00:00:00Z`);
-  start.setUTCDate(start.getUTCDate() - start.getUTCDay());
-  end.setUTCDate(end.getUTCDate() + 6 - end.getUTCDay());
-  for (const cursor = new Date(start); cursor <= end; cursor.setUTCDate(cursor.getUTCDate() + 1)) {
+  const start = new Date(`${bounds.start}T00:00:00Z`);
+  const end = new Date(`${bounds.end}T00:00:00Z`);
+  if (weekly) {
+    const weekStart = new Date(`${fullSeries[0].date}T00:00:00Z`).getUTCDay();
+    start.setUTCDate(start.getUTCDate() + (weekStart - start.getUTCDay() + 7) % 7);
+  } else {
+    start.setUTCDate(start.getUTCDate() - start.getUTCDay());
+    end.setUTCDate(end.getUTCDate() + 6 - end.getUTCDay());
+  }
+  const monthColumns = new Map();
+  const firstMonth = new Date(`${bounds.start}T00:00:00Z`);
+  const monthName = new Intl.DateTimeFormat('en', { month: 'short', timeZone: 'UTC' });
+  monthColumns.set(0, [monthName.format(firstMonth)]);
+  const nextMonth = new Date(firstMonth);
+  nextMonth.setUTCMonth(nextMonth.getUTCMonth() + 1, 1);
+  while (nextMonth <= end) {
+    const column = Math.max(0, Math.floor((nextMonth - start) / 604800000));
+    const names = monthColumns.get(column) ?? [];
+    names.push(monthName.format(nextMonth));
+    monthColumns.set(column, names);
+    nextMonth.setUTCMonth(nextMonth.getUTCMonth() + 1);
+  }
+  const columns = Math.max(1, Math.floor((end - start) / 604800000) + 1);
+  heatmap.style.setProperty('--month-axis-height', [...monthColumns.values()].some(names => names.length > 1) ? '40px' : '20px');
+  months.style.gridTemplateColumns = `repeat(${columns}, 24px)`;
+  for (const [column, names] of monthColumns) {
+    const month = element('div');
+    for (const name of names) month.append(element('span', name));
+    month.style.gridColumn = String(column + 1);
+    months.append(month);
+  }
+  for (const cursor = new Date(start); cursor <= end; cursor.setUTCDate(cursor.getUTCDate() + (weekly ? 7 : 1))) {
     const key = cursor.toISOString().slice(0, 10);
     const bucket = buckets.get(key);
     if (bucket?.tokens == null) {
       const gap = element('span', '', 'heatmap-gap');
-      if (bucket) gap.setAttribute('aria-label', `${calendarDate(key)} no value supplied`);
+      if (key >= bounds.start && key <= bounds.end) gap.setAttribute('aria-label', `${calendarDate(key)} no value supplied`);
       grid.append(gap);
       continue;
     }
@@ -150,7 +195,8 @@ function history(title, fullSeries, period) {
     cell.onblur = hide;
     grid.append(cell);
   }
-  scroll.append(grid);
+  scroll.append(months, grid);
+  body.append(scroll);
   const legend = element('div', null, 'heatmap-legend');
   legend.append(element('span', 'Less'));
   for (let level = 0; level <= 4; level++) {
@@ -159,8 +205,8 @@ function history(title, fullSeries, period) {
     legend.append(swatch);
   }
   legend.append(element('span', 'More'));
-  heatmap.append(tooltip, scroll, legend);
-  section.append(svg, heatmap);
+  heatmap.append(tooltip, body, legend);
+  section.append(heatmap);
   return section;
 }
 
@@ -192,7 +238,8 @@ export async function mount(root, host) {
   main.append(nav, connection, panel);
   root.replaceChildren(stylesheet, main);
   let selected = 0;
-  let period = 30;
+  let period = 365;
+  const scrollPositions = new Map();
   let snapshot;
   let verified = false;
   let disposed = false;
@@ -200,7 +247,11 @@ export async function mount(root, host) {
   let unsubscribe;
   let refreshing = false;
 
-  function render() {
+  function render(resetScroll = false) {
+    if (resetScroll) scrollPositions.clear();
+    else {
+      for (const scroll of panel.querySelectorAll('.heatmap-scroll')) scrollPositions.set(scroll.dataset.history, scroll.scrollLeft);
+    }
     const focusedPeriod = panel.querySelector('.periods button:focus')?.textContent;
     tabs.forEach((tab, index) => {
       tab.setAttribute('aria-selected', String(selected === index));
@@ -238,11 +289,11 @@ export async function mount(root, host) {
         const controls = element('div', null, 'periods');
         controls.setAttribute('role', 'group');
         controls.setAttribute('aria-label', 'History period');
-        for (const [name, days] of [['7 days', 7], ['30 days', 30], ['All', 'all']]) {
+        for (const [name, days] of [['7 days', 7], ['30 days', 30], ['90 days', 90], ['Year', 365], ['All', 'all']]) {
           const button = element('button', name);
           button.type = 'button';
           button.setAttribute('aria-pressed', String(period === days));
-          button.onclick = () => { period = days; render(); };
+          button.onclick = () => { const changed = period !== days; period = days; render(changed); };
           controls.append(button);
         }
         panel.append(controls);
@@ -252,6 +303,9 @@ export async function mount(root, host) {
         }
         if (focusedPeriod) {
           [...controls.querySelectorAll('button')].find(button => button.textContent === focusedPeriod)?.focus({ preventScroll: true });
+        }
+        for (const scroll of panel.querySelectorAll('.heatmap-scroll')) {
+          scroll.scrollLeft = scrollPositions.get(scroll.dataset.history) ?? scroll.scrollWidth;
         }
       }
     }

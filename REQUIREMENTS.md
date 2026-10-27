@@ -198,3 +198,35 @@ Manual follow-up after GREEN: open existing report in narrow and wide host
 panes, switch both tabs and all periods, focus/hover cells, change host theme,
 receive a live update, close/remount and verify default 30; inspect loading,
 stale, error, zero/false, empty groups and sanitized invocation details.
+
+## Scenario and destination map — calendar heatmaps (confirmed)
+
+Ready for TDD: YES. This supersedes the refinement's default 30-day period and
+period list; all other auth, lifecycle, date, zero and interaction rules remain.
+
+| Entry/scenario | Destination/result | Back, cancellation, restoration | State owner |
+| --- | --- | --- | --- |
+| Existing native command/menu/catalogue entry | Existing Codex Usage destination, Overview initially | Native Back/close unchanged; compact unchanged | Host destination and existing backend |
+| Analytics tab | Existing report's Daily, Cumulative and Weekly charts plus calendar heatmaps | Overview returns within same report; no new destination/dialog/back stack | Frontend report tab |
+| 7 days / 30 days / 90 days / Year / All | One common period for all three histories; visible yyyy.mm.dd range caption | Tab changes and live updates retain selection; remount defaults Year | Frontend mount-local period |
+| Initial/remounted Analytics | Year = 365 inclusive host-local calendar days ending today (not Jan 1 or rolling hours) | Host restores destination, frontend starts fresh Year period | Frontend local calendar clock |
+| Daily / Cumulative calendar | Seven correctly aligned weekday rows, week columns, visible month names above and weekday names left (Mon/Wed/Fri sufficient) | Full selected date window, including unknown dates; exact supplied values and absolute cumulative totals retained | Frontend presentation of sanitized histories |
+| Weekly calendar | One row of week-start cells with month labels, no daily apportionment | Same selected window; unknown weeks never imply zero | Frontend presentation of sanitized weekly buckets |
+| Narrow panel / horizontal movement | Calendar matrix scrolls horizontally, initially at latest/right; weekday labels stay fixed, month labels move with cells | Wide panel shows full matrix when it fits; no page overflow | Calendar scroll viewport |
+| Pointer hover / keyboard focus / touch completion | Existing inline exact yyyy.mm.dd source date and exact count feedback | Existing leave/blur and touch semantics retained; no date-entry control | Cell transient interaction state |
+| Live snapshot / verification / disposal | Existing verified-account gate, finite refresh and charts retained | Selection retained during updates; close/abort releases timer/binding | Existing frontend lifecycle/backend identity owners |
+
+Unknown days/weeks and null values remain visually distinct from explicit zero;
+no missing token count is inferred. Calendar padding outside the chosen date
+window is layout only. All uses each supplied series' earliest/latest date range.
+Keep existing >=24px interaction targets and 14px visual squares. Real data may
+have only 66 daily/cumulative buckets and 11 weekly buckets; Year must still show
+its complete window. No backend/API/auth/compact, new routes or persisted filter.
+Manual verification after GREEN: narrow/wide host panes, both tabs, all five
+periods, initial latest scroll, fixed weekday/moving month alignment, year/leap
+boundaries, exact hover/focus/touch values, live update, close/remount default.
+
+Calendar scroll restoration clarification: each heatmap's frontend mount-local
+scroll position survives live snapshots and Overview/Analytics tab return.
+Initial latest/right positioning applies on mount or period change; remount
+starts fresh. This is reading-position state within the existing destination.

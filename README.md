@@ -56,19 +56,31 @@ without prior-account metrics. Same-session branch navigation preserves the
 account report independently of compact's branch visibility; a new session
 clears the report before refreshing.
 
-Analytics starts with **30 days** selected. **7 days / 30 days / All** controls
+Analytics starts with **Year** selected. **7 days / 30 days / 90 days / Year / All** controls
 apply together to all three histories; limited periods include today and the
-preceding 6 or 29 days in the host's local calendar. All includes every supplied
-bucket. Lifetime statistics and top invocations remain explicitly **all time**.
-The period survives tab changes and live updates, and resets to 30 days when
+preceding 6, 29, 89 or 364 days in the host's local calendar. Year is exactly
+365 inclusive calendar days, including leap days when they fall in that window.
+All uses each series' earliest and latest supplied dates.
+Lifetime statistics and top invocations remain explicitly **all time**.
+The period survives tab changes and live updates, and resets to Year when
 the report is reopened.
 
-Heatmap cells represent supplied days; weekly cells represent the supplied week
-start, without spreading a weekly total across days. Hover or focus a cell for
+Daily and cumulative heatmaps show the entire selected calendar window in seven
+weekday rows and week columns, with fixed weekday labels and aligned month names.
+Weekly heatmaps use a single row of week-start cells, without spreading a weekly
+total across days. A visible date range identifies the chosen window even when
+the server supplies only a few months of history. Unknown dates remain neutral;
+calendar padding outside the range is layout only. Hover or focus a supplied cell for
 its exact date and token count. Missing days and null counts stay neutral;
 explicit zero has its own color. A Less/More legend shows zero plus four green
 levels, scaled to the full supplied series so filtering does not change a
 bucket's intensity. The same heatmaps adapt to host light/dark themes.
+
+In a narrow pane, only the calendar matrix scrolls horizontally; month names move
+with its columns while weekday labels stay fixed. A newly opened report or a
+changed period starts at the latest dates on the right. Your reading position
+survives live updates and switching tabs. Wide panes show the whole matrix when
+it fits.
 
 ## What is shown
 

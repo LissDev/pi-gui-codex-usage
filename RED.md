@@ -681,3 +681,93 @@ order, avoiding Chrome's extra synthesized focus. Later GREEN needs both this
 view regression and fresh installed Electron touch verification. Preserve the
 existing keyboard/pointer tooltip behavior; no extra dialog or table is required.
 RED ownership stops here.
+
+## Calendar heatmaps — RED (2026-10-28)
+
+The confirmed calendar scenario/destination/state map was appended to
+REQUIREMENTS.md before tests were edited. No production code changed in this
+RED phase. Reference inspected: clipboard image ending 30d1b.png (month axis,
+weekday axis, seven-row daily calendar).
+
+Changed test/desktop.test.js: six `calendar:` tests specify default Year/full365
+unknown-date coverage and visible dotted range; inclusive local-year/leap dates;
+Daily/Cumulative actual month/weekday column geometry across December/January;
+Weekly single-row exact week starts/month labels; narrow initial right scroll,
+fixed weekday/moving month geometry and wide fit; 90-day common chart/calendar
+filter with keyboard focus, update/tab retention and remount Year. Existing
+30-day filtering test now explicitly selects 30 days; existing remount assertion
+expects Year; existing keyboard-focus loop also covers 90 days/Year. All prior
+auth, lifecycle, pointer/touch, date and explicit-zero assertions remain.
+
+Exact focused command (elevated Chrome launch):
+`node --test --test-isolation=none --test-name-pattern="calendar:" test/desktop.test.js`
+
+Exit 1: **6 tests, 0 pass, 6 fail**, no skips/cancellations. Relevant failures:
+
+- default Year: control count 0, expected 1;
+- inclusive leap Year: 2 accessible dated cells, expected 365;
+- axes: Daily Mon row-label count 0, expected 1;
+- Weekly: 7 cell-center rows, expected 1;
+- narrow pane: initial latest/right scroll assertion false;
+- 90 days: control count 0, expected 1.
+
+Each test reached the loaded registered frontend and failed on an intended
+observable assertion. The first sandbox attempt failed Chrome spawn EPERM and
+is NOT RED evidence; the elevated rerun above supplied actual behavioral RED.
+
+Constraints: Year is exactly365 inclusive host-local days ending today (leap
+fixture ends2024.03.01, starts2023.03.03); expose each in-window unknown calendar
+date as no-value/unknown, never inferred0; layout padding is not dated history.
+Keep existing Sunday-first calendar alignment; Mon/Wed/Fri labels align with
+actual rows. Month labels begin over the week containing each month start.
+Retain original >=24px targets/14px squares, exact supplied counts, unrebased
+cumulative values, null chart gaps, all auth/lifecycle/touch guarantees. Tests
+use existing heatmap/grid/scroll CSS hooks and semantic dates/axis text; no
+internal renderer export or new backend fixture is required. Full regression
+and host visual verification belong after GREEN. RED owner stops here.
+
+### Calendar reading-position restoration — RED follow-up
+
+Added one bounded test in test/desktop.test.js:
+`calendar: user horizontal reading position survives live updates and tab return`.
+It uses a real narrow Chrome DOM with All history extending to2026.01.01,
+chooses scrollLeft120, publishes an existing-shape snapshot, and expects120;
+it also requires the same position after Overview/Analytics return. The scenario
+map clarifies per-calendar frontend mount-local ownership, fresh latest/right on
+mount/period change and reset on remount.
+
+Exact command (elevated Chrome):
+`node --test --test-isolation=none --test-name-pattern="calendar: user horizontal" test/desktop.test.js`
+
+Exit1: **1 test, 0 pass, 1 fail**, no skip/cancellation. Actual scrollLeft0 versus
+expected120 after snapshot (`A background snapshot preserves the user-selected
+horizontal position`). The frontend loaded and the fixture's nonzero scroll
+precondition passed, so this is behavioral RED rather than setup failure. Tab
+return assertion is present but lies after this expected failure. No production
+edits or commits; RED ownership stops here again.
+
+### Shared-week month labels — RED (accepted native design finding)
+
+Added one parameterized real-Chrome regression (three cases) to
+`test/desktop.test.js`, named `calendar month boundary: <period> keeps both
+months readable when they share the first week`. Cases are7days ending2026.10.03
+(one calendar column, starts2026.09.27),30days ending2026.10.28
+(starts2026.09.29), andYear ending2027.09.29 (starts2026.09.30).
+Daily/Cumulative must retain readable Sep andOct over the first week at320px.
+DOM text-range geometry checks individual month names regardless of combined,
+separate or stacked markup, no clipped first-week labels, no overlap with cells
+or neighboring month text. Existing month-column alignment checks remain.
+
+Exact command (elevated Chrome):
+`node --test --test-isolation=none --test-name-pattern="calendar month boundary:" test/desktop.test.js`
+
+Exit1: **3 tests,0pass,3fail**, no skipped/cancelled tests. Each reaches the loaded
+report and fails `Daily <period>: Sep is readable above the first week, not
+overwritten by the other month`: actual undefined, expected true. The first Sep
+label is missing where Oct starts in the same calendar week. This reproduces the
+accepted native finding rather than a fixture, compilation or environment error.
+
+Constraints: preserve both visible readable month names when their axis column
+coincides, including one-column7days; combined/wrapped/stacked text is allowed.
+Keep labels above cells, unclipped at320px, and without neighboring-label
+overlap. No production edits or commits by this RED owner; stop before GREEN.

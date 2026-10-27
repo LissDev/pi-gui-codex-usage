@@ -282,7 +282,8 @@ test('refinement: empty sections disappear while stale and source errors remain'
 test('refinement: common inclusive calendar periods filter all three histories and preserve absolute cumulative values', async t => {
   const page = await pageFor(t, refinementSnapshot());
   await page.getByRole('tab', { name: 'Analytics', exact: true }).click();
-  assert.equal(await period(page, '30 days').count(), 1, 'One common 30-day default control exists');
+  assert.equal(await period(page, '30 days').count(), 1, 'One common 30-day control exists');
+  await period(page, '30 days').click();
   const check = async (title, included, excluded) => {
     const section = historySection(page, title);
     for (const date of included) assert.equal(await datedCell(section, date).count(), 1, `${title} includes ${date}`);
@@ -304,7 +305,7 @@ test('refinement: common inclusive calendar periods filter all three histories a
   await check('Weekly', ['2026.09.21'], []);
 });
 
-test('refinement: period survives tabs and live updates but remount defaults to 30 days', async t => {
+test('refinement: period survives tabs and live updates but remount defaults to Year', async t => {
   const next = refinementSnapshot();
   const page = await pageFor(t, next);
   await page.getByRole('tab', { name: 'Analytics', exact: true }).click();
@@ -317,6 +318,7 @@ test('refinement: period survives tabs and live updates but remount defaults to 
   assert.equal(await datedCell(historySection(page, 'Daily'), '2026.10.21').count(), 1);
   await page.evaluate(async () => { window.probe.close(); await window.probe.mount(); });
   await page.getByRole('tab', { name: 'Analytics', exact: true }).click();
+  assert.equal(await period(page, 'Year').getAttribute('aria-pressed'), 'true');
   assert.equal(await datedCell(historySection(page, 'Daily'), '2026.09.28').count(), 1);
 });
 
@@ -396,7 +398,7 @@ test('interaction accessibility: keyboard period selection and background update
   const next = refinementSnapshot();
   const page = await pageFor(t, next);
   await page.getByRole('tab', { name: 'Analytics', exact: true }).click();
-  for (const name of ['7 days', '30 days', 'All']) {
+  for (const name of ['7 days', '30 days', '90 days', 'Year', 'All']) {
     await period(page, name).focus();
     await page.keyboard.press('Enter');
     assert.equal(await period(page, name).getAttribute('aria-pressed'), 'true');
@@ -467,3 +469,219 @@ test('Electron touch sequence: exact bucket feedback survives touch completion w
     'Observed Electron touch completion must leave exact-value feedback visible without a synthesized focus/click');
   assert.match((await tooltip.innerText()).replaceAll(',', ''), /2026\.10\.26[\s\S]*2000/);
 });
+
+const calendarDates = section => section.locator('.heatmap-grid [aria-label]').evaluateAll(nodes =>
+  nodes.map(node => node.getAttribute('aria-label').match(/^\d{4}\.\d{2}\.\d{2}/)?.[0]).filter(Boolean));
+
+async function calendarAt(t, now, next = refinementSnapshot(), contextOptions = {}) {
+  const page = await pageFor(t, next, 'Europe/Moscow', contextOptions);
+  await page.clock.setFixedTime(new Date(now));
+  await page.evaluate(async () => { window.probe.close(); await window.probe.mount(); });
+  await page.getByRole('tab', { name: 'Analytics', exact: true }).click();
+  return page;
+}
+
+test('calendar: default Year renders all 365 dates and labels unknown days without inventing zero', async t => {
+  const page = await pageFor(t, refinementSnapshot());
+  await page.getByRole('tab', { name: 'Analytics', exact: true }).click();
+  assert.equal(await period(page, 'Year').count(), 1, 'Year is an available common period');
+  assert.equal(await period(page, 'Year').getAttribute('aria-pressed'), 'true', 'Year is the initial period');
+  for (const title of ['Daily', 'Cumulative']) {
+    const section = historySection(page, title);
+    const dates = await calendarDates(section);
+    assert.equal(new Set(dates).size, 365, `${title} exposes every selected calendar date, including unknown dates`);
+    assert.equal(dates[0], '2025.10.28');
+    assert.equal(dates.at(-1), '2026.10.27');
+    assert.match(await section.innerText(), /2025\.10\.28\s*[–—-]\s*2026\.10\.27/, 'Visible range includes both years');
+    const unknown = datedCell(section, '2025.10.28');
+    assert.match(await unknown.getAttribute('aria-label'), /unknown|no value|not supplied/i);
+    assert.doesNotMatch(await unknown.getAttribute('aria-label'), /\b0 tokens\b/);
+    const zero = datedCell(historySection(page, 'Daily'), '2026.10.21');
+    const background = cell => cell.evaluate(el => getComputedStyle(el).backgroundColor);
+    assert.notEqual(await background(unknown), await background(zero), 'Unknown is visually distinct from real zero');
+  }
+});
+
+test('calendar: Year includes leap day and uses inclusive local dates across the year boundary', async t => {
+  const next = refinementSnapshot();
+  next.analytics.daily = next.analytics.cumulative = [{ date: '2024-02-29', tokens: 17 }, { date: '2024-03-01', tokens: 19 }];
+  const page = await calendarAt(t, '2024-03-01T00:30:00+03:00', next);
+  for (const title of ['Daily', 'Cumulative']) {
+    const dates = await calendarDates(historySection(page, title));
+    assert.equal(dates.length, 365, 'Year is exactly 365 inclusive local calendar dates');
+    assert.equal(dates[0], '2023.03.03');
+    assert.equal(dates.at(-1), '2024.03.01');
+    assert.equal(dates.filter(date => date === '2024.02.29').length, 1, 'Leap day appears exactly once');
+  }
+});
+
+test('calendar: daily and cumulative month and weekday axes match actual week columns', async t => {
+  const next = refinementSnapshot();
+  const dates = ['2025-12-28', '2025-12-29', '2025-12-31', '2026-01-01', '2026-01-04', '2026-01-05', '2026-01-07', '2026-01-09', '2026-01-10'];
+  next.analytics.daily = next.analytics.cumulative = dates.map(date => ({ date, tokens: 1 }));
+  const page = await calendarAt(t, '2026-01-10T12:00:00+03:00', next, { viewport: { width: 1800, height: 900 } });
+  await period(page, 'All').click();
+  for (const title of ['Daily', 'Cumulative']) {
+    const section = historySection(page, title);
+    const heatmap = section.locator('.heatmap');
+    const center = async locator => { const box = await locator.boundingBox(); return { x: box.x + box.width / 2, y: box.y + box.height / 2 }; };
+    for (const [day, date] of [['Mon', '2026.01.05'], ['Wed', '2026.01.07'], ['Fri', '2026.01.09']]) {
+      const label = heatmap.getByText(day, { exact: true });
+      assert.equal(await label.count(), 1, `${title} has visible ${day} row label`);
+      const a = await center(label), b = await center(datedCell(section, date));
+      assert.ok(Math.abs(a.y - b.y) <= 3 && a.x < b.x, `${day} aligns with the correct weekday row`);
+    }
+    const january = heatmap.getByText('Jan', { exact: true });
+    assert.equal(await january.count(), 1, `${title} has a visible January label`);
+    const monthBox = await january.boundingBox(), first = await datedCell(section, '2026.01.01').boundingBox();
+    assert.ok(Math.abs(monthBox.x - first.x) <= first.width, 'January starts over the week containing January 1');
+    assert.ok(monthBox.y + monthBox.height <= first.y, 'Month axis is above the cells');
+    const sunday = await center(datedCell(section, '2026.01.04'));
+    const saturday = await center(datedCell(section, '2026.01.10'));
+    assert.ok(Math.abs(sunday.x - saturday.x) < 1, 'Sunday to Saturday share the same week column');
+    assert.ok(sunday.y < saturday.y, 'Days progress down weekday rows');
+  }
+});
+
+test('calendar: Weekly uses one row of exact week starts and visible months without daily apportionment', async t => {
+  const page = await pageFor(t, refinementSnapshot(), 'Europe/Moscow', { viewport: { width: 1800, height: 900 } });
+  await page.getByRole('tab', { name: 'Analytics', exact: true }).click();
+  await period(page, 'All').click();
+  const section = historySection(page, 'Weekly');
+  const rows = await section.locator('.heatmap-grid').evaluate(el =>
+    [...el.children].map(child => { const box = child.getBoundingClientRect(); return Math.round(box.y + box.height / 2); }));
+  assert.equal(new Set(rows).size, 1, 'All weekly cells and unknown weeks occupy one row');
+  assert.equal(await datedCell(section, '2026.10.20').count(), 0, 'No invented daily buckets for a weekly total');
+  assert.ok(await section.locator('.heatmap').getByText('Oct', { exact: true }).isVisible(), 'Weekly month axis is visible');
+  await datedCell(section, '2026.10.26').focus();
+  assert.match((await page.getByRole('tooltip').innerText()).replaceAll(',', ''), /2026\.10\.26[\s\S]*7000/);
+});
+
+test('calendar: narrow Year opens at latest dates with fixed weekday labels and scrolling months', async t => {
+  const page = await pageFor(t, refinementSnapshot());
+  await page.getByRole('tab', { name: 'Analytics', exact: true }).click();
+  const section = historySection(page, 'Daily');
+  const scroll = section.locator('.heatmap-scroll');
+  const metrics = await scroll.evaluate(el => ({ left: el.scrollLeft, max: el.scrollWidth - el.clientWidth }));
+  assert.ok(metrics.max > 0 && Math.abs(metrics.left - metrics.max) <= 1, 'Initial scroll reveals latest dates at the right edge');
+  const weekday = section.locator('.heatmap').getByText('Mon', { exact: true });
+  const month = section.locator('.heatmap').getByText('Sep', { exact: true });
+  const beforeDay = await weekday.boundingBox(), beforeMonth = await month.boundingBox();
+  const beforeCell = await datedCell(section, '2026.10.26').boundingBox();
+  await scroll.evaluate(el => { el.scrollLeft -= 72; });
+  const afterDay = await weekday.boundingBox(), afterMonth = await month.boundingBox();
+  const afterCell = await datedCell(section, '2026.10.26').boundingBox();
+  assert.ok(Math.abs(afterDay.x - beforeDay.x) < 1, 'Weekday labels stay fixed at the left');
+  assert.ok(Math.abs(afterCell.x - beforeCell.x - 72) < 1, 'Cells move with horizontal scroll');
+  assert.ok(Math.abs(afterMonth.x - beforeMonth.x - 72) < 1, 'Months move in alignment with cells');
+  assert.ok(await page.locator('#root').evaluate(el => el.scrollWidth <= innerWidth), 'Only matrix scrolls, not the report page');
+  await page.setViewportSize({ width: 1800, height: 900 });
+  assert.ok(await scroll.evaluate(el => el.scrollWidth <= el.clientWidth), 'Wide panel fits the full Year');
+});
+
+test('calendar: 90 days filters all three histories and keeps selection through keyboard tabs and updates', async t => {
+  const next = refinementSnapshot();
+  next.analytics.daily.unshift({ date: '2026-07-29', tokens: 9 }, { date: '2026-07-30', tokens: 10 });
+  next.analytics.cumulative.unshift({ date: '2026-07-29', tokens: 99 }, { date: '2026-07-30', tokens: 100 });
+  next.analytics.weekly.unshift({ date: '2026-07-27', tokens: 90 }, { date: '2026-08-03', tokens: 100 });
+  const page = await pageFor(t, next);
+  await page.getByRole('tab', { name: 'Analytics', exact: true }).click();
+  const button = period(page, '90 days');
+  assert.equal(await button.count(), 1, '90-day control exists');
+  await button.focus();
+  await page.keyboard.press('Enter');
+  assert.equal(await button.getAttribute('aria-pressed'), 'true');
+  assert.equal(await button.evaluate(el => el === document.activeElement), true);
+  await page.evaluate(state => window.probe.publish(state), next);
+  assert.equal(await button.evaluate(el => el === document.activeElement), true);
+  await page.getByRole('tab', { name: 'Overview', exact: true }).click();
+  await page.getByRole('tab', { name: 'Analytics', exact: true }).click();
+  assert.equal(await button.getAttribute('aria-pressed'), 'true');
+  for (const title of ['Daily', 'Cumulative']) {
+    const section = historySection(page, title);
+    assert.equal(await datedCell(section, '2026.07.29').count(), 0);
+    assert.equal(await datedCell(section, '2026.07.30').count(), 1);
+    assert.equal((await calendarDates(section)).length, 90);
+    assert.equal(await section.locator('svg .data-point').count(), title === 'Daily' ? 10 : 11, 'Chart uses the same period, preserving null gaps');
+  }
+  const weekly = historySection(page, 'Weekly');
+  assert.equal(await datedCell(weekly, '2026.07.27').count(), 0);
+  assert.equal(await datedCell(weekly, '2026.08.03').count(), 1);
+  assert.equal(await weekly.locator('svg .data-point').count(), 5);
+  await page.evaluate(async () => { window.probe.close(); await window.probe.mount(); });
+  await page.getByRole('tab', { name: 'Analytics', exact: true }).click();
+  assert.equal(await period(page, 'Year').getAttribute('aria-pressed'), 'true');
+});
+
+test('calendar: user horizontal reading position survives live updates and tab return', async t => {
+  const next = refinementSnapshot();
+  next.analytics.daily.unshift({ date: '2026-01-01', tokens: 1 });
+  const page = await pageFor(t, next);
+  await page.getByRole('tab', { name: 'Analytics', exact: true }).click();
+  await period(page, 'All').click();
+  const scroll = historySection(page, 'Daily').locator('.heatmap-scroll');
+  const chosen = await scroll.evaluate(el => {
+    const max = el.scrollWidth - el.clientWidth;
+    el.scrollLeft = Math.min(120, max / 2);
+    return el.scrollLeft;
+  });
+  assert.ok(chosen > 0, 'Fixture has enough history to choose a nonzero reading position');
+  await page.evaluate(state => window.probe.publish(state), next);
+  assert.equal(Math.round(await scroll.evaluate(el => el.scrollLeft)), Math.round(chosen),
+    'A background snapshot preserves the user-selected horizontal position');
+  await page.getByRole('tab', { name: 'Overview', exact: true }).click();
+  await page.getByRole('tab', { name: 'Analytics', exact: true }).click();
+  assert.equal(Math.round(await scroll.evaluate(el => el.scrollLeft)), Math.round(chosen),
+    'Returning to Analytics preserves the user-selected horizontal position');
+});
+
+for (const boundary of [
+  { period: '7 days', now: '2026-10-03T12:00:00+03:00', start: '2026-09-27' },
+  { period: '30 days', now: '2026-10-28T12:00:00+03:00', start: '2026-09-29' },
+  { period: 'Year', now: '2027-09-29T12:00:00+03:00', start: '2026-09-30' },
+]) {
+  test(`calendar month boundary: ${boundary.period} keeps both months readable when they share the first week`, async t => {
+    const next = refinementSnapshot();
+    next.analytics.daily = next.analytics.cumulative = [
+      { date: boundary.start, tokens: 1 }, { date: '2026-10-01', tokens: 2 },
+    ];
+    const page = await calendarAt(t, boundary.now, next, { viewport: { width: 320, height: 900 } });
+    await period(page, boundary.period).click();
+    for (const title of ['Daily', 'Cumulative']) {
+      const section = historySection(page, title);
+      await section.locator('.heatmap-scroll').evaluate(el => { el.scrollLeft = 0; });
+      const geometry = await section.locator('.heatmap-months').evaluate(axis => {
+        const rect = node => { const r = node.getBoundingClientRect(); return { x: r.x, y: r.y, right: r.right, bottom: r.bottom, width: r.width, height: r.height }; };
+        const labels = [];
+        const walker = document.createTreeWalker(axis, NodeFilter.SHOW_TEXT);
+        while (walker.nextNode()) {
+          const node = walker.currentNode;
+          for (const match of node.textContent.matchAll(/Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec/g)) {
+            const range = document.createRange();
+            range.setStart(node, match.index);
+            range.setEnd(node, match.index + match[0].length);
+            labels.push({ name: match[0], ...rect(range) });
+          }
+        }
+        return { labels, viewport: rect(axis.closest('.heatmap-scroll')), grid: rect(axis.parentElement.querySelector('.heatmap-grid')) };
+      });
+      const firstWeekLabels = geometry.labels.filter(label => label.x < geometry.grid.x + 48);
+      for (const name of ['Sep', 'Oct']) {
+        const label = firstWeekLabels.find(candidate => candidate.name === name);
+        assert.ok(label, `${title} ${boundary.period}: ${name} is readable above the first week, not overwritten by the other month`);
+        assert.ok(label.width > 0 && label.height > 0 && label.x >= geometry.viewport.x && label.right <= geometry.viewport.right,
+          `${name} is not clipped in a 320px pane`);
+        assert.ok(label.bottom <= geometry.grid.y, `${name} does not overlap calendar cells`);
+      }
+      for (let i = 0; i < geometry.labels.length; i++) {
+        for (const other of geometry.labels.slice(i + 1)) {
+          const label = geometry.labels[i];
+          const overlapWidth = Math.min(label.right, other.right) - Math.max(label.x, other.x);
+          const overlapHeight = Math.min(label.bottom, other.bottom) - Math.max(label.y, other.y);
+          assert.ok(overlapWidth <= 0.5 || overlapHeight <= 0.5,
+            `${title} month names ${label.name}/${other.name} remain readable without overlapping`);
+        }
+      }
+    }
+  });
+}
