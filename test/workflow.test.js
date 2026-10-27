@@ -134,6 +134,12 @@ test('details refresh cancelled by compact hide reports that identity was not ve
   const service = h.detailsService();
   await service.refresh({}, {});
   assert.equal(h.snapshot().overview.windows[0].usedPercent, 25);
+  assert.deepEqual(h.requests.map(request => new URL(request.url).pathname).sort(), [
+    '/backend-api/wham/profiles/me',
+    '/backend-api/wham/usage',
+    '/backend-api/wham/usage/daily-token-usage-breakdown',
+  ], 'Initial public details refresh reads each approved source exactly once');
+  const requestsBeforeCancellation = h.requests.length;
   let finishAuth;
   options.getAuth = () => new Promise(resolve => { finishAuth = resolve; });
   const refresh = service.refresh({}, {});
@@ -148,7 +154,7 @@ test('details refresh cancelled by compact hide reports that identity was not ve
   }
   assert.ok(rejected || outcome?.verified === false,
     'Cancelled auth work must not report successful identity verification');
-  assert.equal(h.requests.length, 2, 'Cancelled new-account auth cannot dispatch HTTP');
+  assert.equal(h.requests.length, requestsBeforeCancellation, 'Cancelled new-account auth cannot dispatch HTTP');
   assert.equal(h.timers.size, 0);
 });
 

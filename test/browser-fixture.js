@@ -1,5 +1,5 @@
 const config = window.fixtureConfig;
-const probe = window.probe = { calls: 0, timers: new Map(), disposed: 0, unsubscribed: 0, error: null };
+const probe = window.probe = { calls: 0, historyCalls: [], timers: new Map(), disposed: 0, unsubscribed: 0, error: null };
 const theme = { mode: 'dark', background: '#1d1d1c', foreground: '#d3d3cf', accent: '#7aa2f7' };
 probe.changeTheme = next => {
   Object.assign(theme, next);
@@ -15,7 +15,15 @@ const state = {
   value: config.snapshot,
   subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener); probe.unsubscribed++; }; },
 };
-const service = { state, async refresh() {
+const service = { state, async refreshHistory(range) {
+  probe.historyCalls.push(range);
+  if (config.deferredHistory) {
+    config.deferredHistory = false;
+    return new Promise(resolve => { probe.resolveHistory = resolve; });
+  }
+  probe.publish({ ...state.value, history: { ...state.value.history, ...range } });
+  return { verified: true };
+}, async refresh() {
   probe.calls++;
   if (!config.deferredRefresh) return { verified: true };
   return new Promise((resolve, reject) => {
@@ -31,6 +39,7 @@ probe.tick = async () => { await Promise.all([...probe.timers.values()].map(call
 probe.close = () => dispose?.();
 probe.abort = () => controller?.abort();
 probe.deferNextRefresh = () => { config.deferredRefresh = true; };
+probe.deferNextHistory = () => { config.deferredHistory = true; };
 probe.mount = async () => {
   if (!config.frontend) return;
   controller = new AbortController();

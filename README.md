@@ -1,6 +1,6 @@
 # Codex Usage
 
-Codex quotas in a compact native dock, with a graphical report in the right
+Codex quotas in a compact native dock, with usage history and a graphical report in the right
 workbench. A standalone extension for vanilla **pi-gui 1.0.1**, whose bundled
 Pi SDK is 0.87.1. All frontend assets ship ready to use; no build or manual
 settings are required.
@@ -44,7 +44,7 @@ current compact widget; changed output may show it again. Use the Hide command
 for durable hiding.
 
 The right report has two keyboard-accessible tabs: **Overview** for graphical
-quota meters and supplied account details, and **Analytics** for all-time metrics,
+quota meters and supplied account details, and **Analytics** for Usage history, all-time metrics,
 invocation details and daily, cumulative and weekly charts with calendar heatmaps. Close it
 with the native workbench control; Hide affects compact only. A mounted report
 refreshes on entry and every three minutes. Closing/disposal stops its frontend
@@ -55,6 +55,31 @@ resumes frontend polling. A failed initial refresh shows unavailable feedback
 without prior-account metrics. Same-session branch navigation preserves the
 account report independently of compact's branch visibility; a new session
 clears the report before refreshing.
+
+### Usage history
+
+The first chart in Analytics shows daily server-reported usage. Its independent
+**7 days / 30 days** controls default to the latest seven inclusive local calendar
+days. **Previous / Next** move a whole window; Next stops at today. Changing the
+duration resets to the latest window. **Group by** selects feature, model, surface
+or turn start using the same source attribution. These selections survive tab
+changes and live updates; reopening resets to seven days, latest, By feature.
+
+Stacked bars use the source's **percent** or **credits** units. Hover, focus or
+touch a dated bar for exact daily amounts and group values, including tiny
+positive amounts and explicit zero. Missing values stay unknown; mixed days show
+a known subtotal, and legend shares identify the known selected usage denominator.
+These amounts do not represent token totals or a weekly quota percentage.
+
+The source currently supplies no freshness timestamp, so **Data as of** says
+**unknown**. **Updated** separately identifies the local successful fetch time.
+Empty data, source errors and retained stale values have separate feedback.
+Only the current account and selected range can reuse last-good history; changing
+the range requests history alone when the account is unchanged. If Pi resolves a
+different account, that refresh also reloads its subscription limits and token
+profile. Compact refreshes continue to request only those two sources.
+
+### Token calendars
 
 Analytics starts with **Year** selected. **7 days / 30 days / 90 days / Year / All** controls
 apply together to all three histories; limited periods include today and the
@@ -129,7 +154,13 @@ The extension makes only authenticated GET requests to:
 ```text
 https://chatgpt.com/backend-api/wham/usage
 https://chatgpt.com/backend-api/wham/profiles/me
+https://chatgpt.com/backend-api/wham/usage/daily-token-usage-breakdown
 ```
+
+History sends the selected `start_date`, `end_date`, `group_by=day` query and the
+`x-openai-codex-usage-categories: 1` request header. Only sanitized dates, usage
+amounts and attribution dimensions enter the report; per-model credit metadata
+is not added again to the attribution values.
 
 It checks Pi's provider and effective auth origins before sending credentials,
 and rejects redirects. These are private ChatGPT endpoints and may change or

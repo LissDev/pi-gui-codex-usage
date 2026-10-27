@@ -104,10 +104,7 @@ function analyticsReport(body) {
     if (buckets != null && !Array.isArray(buckets)) throw new Error('Invalid buckets');
     series.push((buckets ?? []).filter(bucket => {
       if (bucket.tokens != null && (typeof bucket.tokens !== 'number' || !Number.isFinite(bucket.tokens) || bucket.tokens < 0)) throw new Error('Invalid token count');
-      const date = bucket.start_date;
-      if (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return false;
-      const timestamp = Date.parse(`${date}T00:00:00Z`);
-      return Number.isFinite(timestamp) && new Date(timestamp).toISOString().slice(0, 10) === date;
+      return validDate(bucket.start_date);
     }).map(bucket => ({ date: bucket.start_date, tokens: bucket.tokens ?? null }))
       .sort((first, second) => first.date.localeCompare(second.date)));
   }
@@ -136,6 +133,44 @@ function official(url) {
   catch { return false; }
 }
 
+function validDate(date) {
+  if (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return false;
+  const timestamp = Date.parse(`${date}T00:00:00Z`);
+  return Number.isFinite(timestamp) && new Date(timestamp).toISOString().slice(0, 10) === date;
+}
+
+function validateHistoryRange(range) {
+  if (!validDate(range?.startDate) || !validDate(range?.endDate) || range.startDate > range.endDate) throw new Error('Invalid history range');
+  return { startDate: range.startDate, endDate: range.endDate };
+}
+
+function latestHistoryRange(timestamp) {
+  const end = new Date(timestamp);
+  const start = new Date(end.getFullYear(), end.getMonth(), end.getDate() - 6);
+  const key = day => `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`;
+  return { startDate: key(start), endDate: key(end) };
+}
+
+function usageHistoryReport(body, range) {
+  if (!object(body) || !['percent', 'credits'].includes(body.units) || !Array.isArray(body.data)) throw new Error('Usage history unavailable');
+  const data = body.data.map(day => {
+    if (!validDate(day.date) || !Array.isArray(day.attribution)) throw new Error('Invalid usage history');
+    const attribution = day.attribution.map(row => {
+      if (!object(row) || (row.value != null && (typeof row.value !== 'number' || !Number.isFinite(row.value) || row.value < 0))) throw new Error('Invalid usage attribution');
+      const item = { value: row.value ?? null };
+      for (const field of ['thread_source', 'turn_trigger', 'model', 'surface']) {
+        if (row[field] == null) continue;
+        if (typeof row[field] !== 'string') throw new Error('Invalid usage dimension');
+        const name = value(row[field]).trim();
+        if (name) item[field] = name;
+      }
+      return item;
+    });
+    return { date: day.date, attribution };
+  }).filter(day => day.date >= range.startDate && day.date <= range.endDate).sort((first, second) => first.date.localeCompare(second.date));
+  return { units: body.units, data, dataAsOf: null };
+}
+
 export default function codexUsage(pi, services = {}) {
   const fetch = services.fetch ?? globalThis.fetch;
   const setInterval = services.setInterval ?? globalThis.setInterval;
@@ -148,6 +183,8 @@ export default function codexUsage(pi, services = {}) {
   let running;
   let identity;
   let sections = {};
+  let historyRange = latestHistoryRange(now());
+  let historySection;
   let reportState;
   let sessionContext;
 
@@ -159,6 +196,7 @@ export default function codexUsage(pi, services = {}) {
       summary: left == null ? 'Codex usage · unavailable' : `Codex usage · ${left}% left`,
       overview: { metrics: limits?.metrics ?? [], windows: limits?.windows ?? [], updatedAt: limits?.at ?? null, stale: limits?.stale ?? false, error: authMessage ?? limits?.error ?? (limits ? null : 'Limits unavailable') },
       analytics: { metrics: analytics?.metrics ?? [], invocations: analytics?.invocations ?? [], daily: analytics?.daily ?? [], cumulative: analytics?.cumulative ?? [], weekly: analytics?.weekly ?? [], updatedAt: analytics?.at ?? null, stale: analytics?.stale ?? false, error: authMessage ?? analytics?.error ?? (analytics ? null : 'Analytics unavailable') },
+      history: { ...historyRange, units: historySection?.units ?? null, data: historySection?.data ?? [], dataAsOf: historySection?.dataAsOf ?? null, updatedAt: historySection?.at ?? null, stale: historySection?.stale ?? false, error: authMessage ?? historySection?.error ?? (historySection ? null : 'Usage history unavailable') },
     };
   }
 
@@ -171,8 +209,12 @@ export default function codexUsage(pi, services = {}) {
         reportState = env.replicatedState(snapshot());
         env.provide(CodexUsageDetails, {
           state: reportState,
-          async refresh() {
-            return { verified: sessionContext ? await refresh(sessionContext) === true : false };
+          async refresh(input = {}) {
+            return { verified: sessionContext ? await refresh(sessionContext, { history: true, range: input.historyRange }) === true : false };
+          },
+          async refreshHistory(range) {
+            const selected = validateHistoryRange(range);
+            return { verified: sessionContext ? await refresh(sessionContext, { history: true, onlyHistory: true, range: selected }) === true : false };
           },
         });
       },
@@ -211,9 +253,22 @@ export default function codexUsage(pi, services = {}) {
     ctx.ui.setStatus(key, report.summary);
   }
 
-  function refresh(ctx) {
-    if (running) return running.promise;
-    const work = { controller: new AbortController(), generation };
+  function refresh(ctx, options = {}) {
+    if (options.range) {
+      const selected = validateHistoryRange(options.range);
+      if (selected.startDate !== historyRange.startDate || selected.endDate !== historyRange.endDate) {
+        generation++;
+        running?.controller.abort();
+        running = undefined;
+        historyRange = selected;
+        historySection = undefined;
+      }
+    }
+    if (running) {
+      if (options.history && !running.history) return running.promise.then(verified => verified ? refresh(ctx, { history: true, onlyHistory: true }) : false);
+      return running.promise;
+    }
+    const work = { controller: new AbortController(), generation, history: options.history };
     running = work;
     const current = () => generation === work.generation;
     const signal = work.controller.signal;
@@ -234,6 +289,7 @@ export default function codexUsage(pi, services = {}) {
         if (current()) {
           identity = undefined;
           sections = {};
+          historySection = undefined;
           render(ctx, 'Pi authentication unavailable; sign in and refresh');
         }
         return false;
@@ -243,6 +299,7 @@ export default function codexUsage(pi, services = {}) {
       if (!resolved?.auth?.apiKey || !ctx.modelRegistry.isUsingOAuth({ provider: 'openai-codex' }) || !official(provider?.baseUrl) || (resolved.auth.baseUrl && !official(resolved.auth.baseUrl))) {
         identity = undefined;
         sections = {};
+        historySection = undefined;
         render(ctx, 'Official Pi OAuth authentication unavailable');
         return false;
       }
@@ -260,25 +317,44 @@ export default function codexUsage(pi, services = {}) {
       if (!account) {
         identity = undefined;
         sections = {};
+        historySection = undefined;
         render(ctx, 'Pi OAuth account identity unavailable; sign in and refresh');
         return false;
       }
       headers.set('chatgpt-account-id', account);
-      if (account !== identity) {
+      const accountChanged = account !== identity;
+      if (accountChanged) {
         sections = {};
+        historySection = undefined;
         identity = account;
         render(ctx);
       }
-      await Promise.all([['usage', 'Limits', limitsReport], ['profiles/me', 'Analytics', analyticsReport]].map(async ([path, title, format]) => {
+      const sources = options.onlyHistory && !accountChanged ? [] : [['usage', 'Limits', limitsReport], ['profiles/me', 'Analytics', analyticsReport]];
+      if (options.history) sources.push(['usage/daily-token-usage-breakdown', 'History', usageHistoryReport]);
+      const range = { ...historyRange };
+      await Promise.all(sources.map(async ([path, title, format]) => {
         try {
-          const response = await bounded(fetch(`${origin}/backend-api/wham/${path}`, { method: 'GET', headers, redirect: 'error', signal }));
+          const url = new URL(`${origin}/backend-api/wham/${path}`);
+          const requestHeaders = new Headers(headers);
+          if (title === 'History') {
+            url.search = new URLSearchParams({ start_date: range.startDate, end_date: range.endDate, group_by: 'day' }).toString();
+            requestHeaders.set('x-openai-codex-usage-categories', '1');
+          }
+          const response = await bounded(fetch(url.href, { method: 'GET', headers: requestHeaders, redirect: 'error', signal }));
           if (!response.ok) throw new Error('Unavailable');
-          const report = format(await bounded(response.json()));
-          if (current() && !signal.aborted) sections[title] = { ...report, at: now(), stale: false, error: null };
+          const report = format(await bounded(response.json()), range);
+          if (current() && !signal.aborted) {
+            const section = { ...report, at: now(), stale: false, error: null };
+            if (title === 'History') historySection = section;
+            else sections[title] = section;
+          }
         } catch {
-          if (current() && sections[title]) {
-            sections[title].stale = true;
-            sections[title].error = `${title} unavailable`;
+          if (current()) {
+            const section = title === 'History' ? historySection : sections[title];
+            if (section) {
+              section.stale = true;
+              section.error = title === 'History' ? 'Usage history unavailable' : `${title} unavailable`;
+            }
           }
         }
       }));
@@ -325,6 +401,8 @@ export default function codexUsage(pi, services = {}) {
     if (_event.type !== 'session_tree') {
       identity = undefined;
       sections = {};
+      historyRange = latestHistoryRange(now());
+      historySection = undefined;
     }
     visible = ctx.sessionManager.getBranch().filter(entry => entry.type === 'custom' && entry.customType === visibilityType).at(-1)?.data?.visible === true;
     render(ctx);

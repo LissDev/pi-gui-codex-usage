@@ -1,6 +1,14 @@
 * { box-sizing: border-box; }
 body { margin: 0; }
 .codex-usage {
+  --usage-series-0: light-dark(#3169af, #7ba9ee);
+  --usage-series-1: light-dark(#a65020, #edaa69);
+  --usage-series-2: light-dark(#477b32, #8dc578);
+  --usage-series-3: light-dark(#8b4a9b, #cc93dc);
+  --usage-series-4: light-dark(#a13451, #ec8ba5);
+  --usage-series-5: light-dark(#2c7d7c, #76c4c1);
+  --usage-series-6: light-dark(#856d20, #d5bd66);
+  --usage-series-7: light-dark(#6554a7, #aaa0e9);
   --heat-0: light-dark(#e6e9e6, #26352c);
   --heat-1: light-dark(#b4e3b5, #245c35);
   --heat-2: light-dark(#77c982, #2f8546);
@@ -52,6 +60,18 @@ svg text { fill: var(--foreground); font: 11px system-ui, sans-serif; }
 .data-line { fill: none; stroke: var(--accent); stroke-width: 2; }
 .data-point { fill: var(--accent); }
 .periods { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 24px; }
+.usage-history { position: relative; margin-bottom: 28px; }
+.usage-controls { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.usage-controls label { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 12px; }
+.usage-controls select { min-height: 40px; padding: 6px; max-width: 100%; color: var(--foreground); background: var(--background); border: 1px solid color-mix(in srgb, var(--foreground) 25%, transparent); border-radius: 6px; font: inherit; }
+.usage-chart { max-height: 220px; }
+.usage-day-details { margin: 12px 0; white-space: pre-line; }
+.usage-chart [role="button"] { cursor: pointer; }
+.usage-chart [role="button"]:focus-visible { outline: 2px solid var(--accent); }
+.usage-legend { list-style: none; padding: 0; margin: 8px 0; display: grid; gap: 8px; }
+.usage-legend li { display: flex; align-items: center; gap: 8px; }
+.usage-swatch { display: inline-block; width: 12px; height: 12px; border-radius: 2px; flex-shrink: 0; }
+.usage-tooltip { position: absolute; left: 0; max-width: 100%; padding: 8px; background: var(--background); color: var(--foreground); border: 1px solid var(--accent); border-radius: 4px; font-size: 12px; white-space: pre-line; z-index: 2; }
 .invocations { margin-top: 24px; }
 .invocations ul { margin: 0; padding-left: 18px; }
 .invocations li { padding: 6px 0; }

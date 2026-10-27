@@ -65,6 +65,206 @@ async function pageFor(t, next, timezoneId = 'Europe/Moscow', contextOptions = {
   return page;
 }
 
+const historySnapshot = () => ({ ...structuredClone(snapshot), history: {
+  startDate: '2026-10-21', endDate: '2026-10-27', units: 'percent', dataAsOf: null,
+  updatedAt: timestamp, stale: false, error: null,
+  data: [{ date: '2026-10-26', attribution: [
+    { thread_source: 'user', turn_trigger: 'composer', model: 'gpt-6.1-sol', surface: 'cli', value: 3 },
+    { thread_source: 'subagent', turn_trigger: 'automation_cron_scheduled', model: 'gpt-6-luna', surface: 'web', value: 2 },
+    { thread_source: 'thread_title', turn_trigger: 'composer_queue', model: 'gpt-6-luna', surface: 'cli', value: 0 },
+    { thread_source: 'thread_title_reconsideration', turn_trigger: 'automation_heartbeat_scheduled', model: 'gpt-6-luna', surface: 'cli', value: 1 },
+    { thread_source: 'aeon_child', turn_trigger: 'user', model: 'gpt-6.1-sol', surface: 'cli', value: 4 },
+  ] }, { date: '2026-10-24', attribution: [
+    { thread_source: 'thread_title', turn_trigger: 'composer_queue', model: 'gpt-6-luna', surface: 'cli', value: 0.00001 },
+  ] }, { date: '2026-10-27', attribution: [
+    { thread_source: 'user', turn_trigger: 'composer', model: 'gpt-6.1-sol', surface: 'cli', value: 0 },
+  ] }],
+} });
+async function historyRegion(page) {
+  await page.getByRole('tab', { name: 'Analytics', exact: true }).click();
+  const region = page.getByRole('region', { name: 'Usage history', exact: true });
+  assert.equal(await region.count(), 1, 'Analytics exposes its new Usage history chart as a labelled region');
+  return region;
+}
+
+test('history: first Analytics chart groups source usage with exact pointer and keyboard values and share legend', async t => {
+  const page = await pageFor(t, historySnapshot());
+  const region = await historyRegion(page);
+  const chart = region.locator('svg, canvas, [role="img"]').first();
+  assert.equal(await chart.count(), 1, 'History has a graphical stacked chart');
+  assert.ok(await region.locator('svg rect').count() >= 5, 'Attribution renders multiple stacked segments rather than token calendar cells');
+  assert.equal(await page.getByRole('tabpanel').locator('svg, canvas, [role="img"]').first().evaluate(el => !!el.closest('[aria-label="Usage history"], [aria-labelledby]') && el.closest('section').textContent.includes('Usage history')), true);
+  assert.match(await chart.textContent(), /10\.26/);
+  const text = await region.innerText();
+  assert.match(text, /2026\.10\.21[\s\S]*2026\.10\.27/);
+  assert.match(text, /Chats[\s\S]*30\s*%/);
+  assert.match(text, /Subagents[\s\S]*20\s*%/);
+  assert.match(text, /Chat titles/);
+  assert.match(text, /Chat titles[^\n]*(?:<\s*0\.1\s*%|0\.000\d+\s*%)/, 'Tiny positive shares never appear as zero');
+  assert.match(text, /share[^\n]*(shown|selected)|(?:shown|selected)[^\n]*share/i, 'Legend percentages describe shares of shown usage');
+  assert.match(text, /Chat title updates/);
+  assert.match(text, /agent.created.thread/i);
+  assert.doesNotMatch(text, /tokens|weekly quota/i);
+  const bar = region.getByRole('button', { name: /2026\.10\.26/ }).first();
+  assert.equal(await bar.count(), 1, 'Dated usage bars expose keyboard access');
+  await bar.focus();
+  assert.match(await region.getByRole('tooltip').innerText(), /2026\.10\.26[\s\S]*10\s*%/);
+  await bar.blur();
+  await bar.hover();
+  assert.match(await region.getByRole('tooltip').innerText(), /2026\.10\.26[\s\S]*10\s*%/);
+  const group = region.getByRole('combobox', { name: 'Group by', exact: true });
+  for (const [option, expected] of [['By model', /gpt-6\.1-sol[\s\S]*70\s*%/], ['By surface', /cli[\s\S]*80\s*%/i], ['By turn start', /User messages[\s\S]*70\s*%/]]) {
+    await group.selectOption({ label: option });
+    assert.match(await region.innerText(), expected, 'Grouping changes attribution labels/shares without changing the total');
+    await region.getByRole('button', { name: /2026\.10\.26/ }).first().focus();
+    assert.match(await region.getByRole('tooltip').innerText(), /10\s*%/);
+  }
+  for (const label of ['Queued messages', 'Scheduled automations', 'Scheduled follow-ups']) assert.ok((await region.innerText()).includes(label));
+  assert.equal(await page.evaluate(() => window.probe.historyCalls.length), 0, 'Grouping uses existing attribution, not another source request');
+});
+
+test('history: independent local seven/thirty day navigation persists across tabs and updates and resets on remount', async t => {
+  const next = historySnapshot();
+  const page = await pageFor(t, next);
+  let region = await historyRegion(page);
+  assert.equal(await region.getByRole('button', { name: '7 days', exact: true }).getAttribute('aria-pressed'), 'true');
+  assert.equal(await region.getByRole('button', { name: 'Next', exact: true }).isDisabled(), true);
+  assert.equal(await page.getByRole('group', { name: 'History period', exact: true }).getByRole('button', { name: 'Year', exact: true }).getAttribute('aria-pressed'), 'true', 'Token calendars retain their independent Year default');
+  await region.getByRole('button', { name: 'Previous', exact: true }).click();
+  assert.deepEqual(await page.evaluate(() => window.probe.historyCalls.at(-1)), { startDate: '2026-10-14', endDate: '2026-10-20' }, 'Host-local inclusive window shifts seven whole days');
+  assert.match(await region.innerText(), /2026\.10\.14[\s\S]*2026\.10\.20/);
+  await region.getByRole('button', { name: '30 days', exact: true }).click();
+  assert.deepEqual(await page.evaluate(() => window.probe.historyCalls.at(-1)), { startDate: '2026-09-28', endDate: '2026-10-27' }, 'Changing duration resets to latest host-local window, including local today after UTC midnight boundary');
+  await region.getByRole('button', { name: 'Previous', exact: true }).click();
+  assert.deepEqual(await page.evaluate(() => window.probe.historyCalls.at(-1)), { startDate: '2026-08-29', endDate: '2026-09-27' });
+  await region.getByRole('button', { name: 'Next', exact: true }).click();
+  assert.equal(await region.getByRole('button', { name: 'Next', exact: true }).isDisabled(), true);
+  await region.getByRole('combobox', { name: 'Group by', exact: true }).selectOption({ label: 'By model' });
+  await page.getByRole('tab', { name: 'Overview', exact: true }).click();
+  region = await historyRegion(page);
+  next.history = { ...next.history, startDate: '2026-09-28', endDate: '2026-10-27' };
+  await page.evaluate(state => window.probe.publish(state), next);
+  assert.equal(await region.getByRole('button', { name: '30 days', exact: true }).getAttribute('aria-pressed'), 'true');
+  assert.equal(await region.getByRole('combobox', { name: 'Group by', exact: true }).locator('option:checked').innerText(), 'By model');
+  assert.match(await region.innerText(), /2026\.09\.28[\s\S]*2026\.10\.27/);
+  assert.equal(await page.getByRole('group', { name: 'History period', exact: true }).getByRole('button', { name: 'Year', exact: true }).getAttribute('aria-pressed'), 'true');
+  await page.evaluate(async () => { window.probe.close(); await window.probe.mount(); });
+  region = await historyRegion(page);
+  assert.equal(await region.getByRole('button', { name: '7 days', exact: true }).getAttribute('aria-pressed'), 'true');
+  assert.equal(await region.getByRole('combobox', { name: 'Group by', exact: true }).locator('option:checked').innerText(), 'By feature');
+  assert.match(await region.innerText(), /2026\.10\.21[\s\S]*2026\.10\.27/);
+});
+
+test('history: zero, unknown source freshness, empty/error and retained stale credits remain distinct', async t => {
+  const next = historySnapshot();
+  const page = await pageFor(t, next);
+  const region = await historyRegion(page);
+  assert.match(await region.innerText(), /data as of[^\n]*unknown/i, 'Fetch time cannot impersonate source freshness');
+  await region.getByRole('button', { name: /2026\.10\.24/ }).first().focus();
+  assert.match(await region.getByRole('tooltip').innerText(), /0\.00001\s*%/, 'Exact help preserves tiny positive source usage');
+  const zero = region.getByRole('button', { name: /2026\.10\.27/ }).first();
+  await zero.focus();
+  assert.match(await region.getByRole('tooltip').innerText(), /0\s*%/);
+  assert.equal(await region.getByRole('button', { name: /2026\.10\.25/ }).count(), 0, 'A missing source day is not an invented zero bar');
+  next.history.units = 'credits';
+  next.history.stale = true;
+  next.history.error = 'Usage history unavailable';
+  await page.evaluate(state => window.probe.publish(state), next);
+  assert.match(await region.innerText(), /stale/i);
+  assert.match(await region.innerText(), /unavailable/i);
+  await region.getByRole('button', { name: /2026\.10\.26/ }).first().focus();
+  assert.match(await region.getByRole('tooltip').innerText(), /10\s*credits/i);
+  next.history = { ...next.history, stale: false, error: null, data: [] };
+  await page.evaluate(state => window.probe.publish(state), next);
+  assert.match(await region.innerText(), /no usage|no data|empty/i);
+  assert.equal(await region.getByRole('button', { name: /2026\.10\.26/ }).count(), 0);
+  next.history.error = 'Usage history unavailable';
+  await page.evaluate(state => window.probe.publish(state), next);
+  assert.match(await region.innerText(), /unavailable/i);
+  assert.equal(await page.getByRole('heading', { name: 'Daily', exact: true }).count(), 1, 'History failure does not remove token calendars');
+});
+
+test('history: mixed known and missing attribution labels known subtotals and never turns an unknown day into zero', async t => {
+  const next = historySnapshot();
+  const dimensions = { thread_source: 'user', turn_trigger: 'composer', model: 'gpt-6.1-sol', surface: 'cli' };
+  next.history.data = [
+    { date: '2026-10-25', attribution: [{ ...dimensions, value: null }] },
+    { date: '2026-10-26', attribution: [{ ...dimensions, value: 3 }, { ...dimensions, thread_source: 'subagent', value: null }] },
+    { date: '2026-10-27', attribution: [{ ...dimensions, value: 0 }] },
+  ];
+  const page = await pageFor(t, next);
+  const region = await historyRegion(page);
+  assert.equal(await region.getByRole('button', { name: /2026\.10\.25/ }).count(), 0, 'All-missing attribution cannot produce a zero-valued bar');
+  await region.getByRole('button', { name: /2026\.10\.27/ }).first().focus();
+  assert.match(await region.getByRole('tooltip').innerText(), /0\s*%/, 'Explicit zero remains inspectable');
+  await region.getByRole('button', { name: /2026\.10\.26/ }).first().focus();
+  const detail = await region.getByRole('tooltip').innerText();
+  assert.match(detail, /3\s*%/, 'Known source usage remains visible');
+  assert.match(detail, /known|subtotal|partial|incomplete|some.*missing/i, 'A known subtotal cannot imply that missing attribution was zero');
+  assert.match(await region.innerText(), /share[^\n]*(?:known|supplied)|(?:known|supplied)[^\n]*share/i, 'Legend shares identify their known-value denominator');
+});
+
+test('history: a full refresh settles the selected chart while an obsolete range request is still pending', async t => {
+  const next = historySnapshot();
+  const page = await pageFor(t, next);
+  const region = await historyRegion(page);
+  await page.evaluate(() => window.probe.deferNextHistory());
+  await region.getByRole('button', { name: 'Previous', exact: true }).click();
+  await page.waitForFunction(() => typeof window.probe.resolveHistory === 'function');
+  assert.match(await region.innerText(), /loading usage history/i);
+  next.history = { ...next.history, startDate: '2026-10-14', endDate: '2026-10-20', data: [
+    { date: '2026-10-19', attribution: [{ thread_source: 'user', turn_trigger: 'composer', model: 'gpt-6.1-sol', surface: 'cli', value: 17 }] },
+  ] };
+  try {
+    await page.evaluate(async state => { window.probe.publish(state); await window.probe.tick(); }, next);
+    assert.doesNotMatch(await region.innerText(), /loading usage history/i, 'A successful newer full refresh finishes loading for its matching selected range');
+    assert.match(await region.innerText(), /2026\.10\.14[\s\S]*2026\.10\.20/);
+    await region.getByRole('button', { name: /2026\.10\.19/ }).first().focus();
+    assert.match(await region.getByRole('tooltip').innerText(), /17\s*%/);
+  } finally {
+    await page.evaluate(async () => { window.probe.resolveHistory({ verified: false }); await Promise.resolve(); });
+  }
+  assert.doesNotMatch(await region.innerText(), /loading|unavailable/i, 'Obsolete completion cannot revoke the newer report');
+  assert.doesNotMatch(await region.locator('.history-range').innerText(), /2026\.10\.21|2026\.10\.27/, 'Obsolete completion cannot restore its old range caption');
+  await region.getByRole('button', { name: /2026\.10\.19/ }).first().focus();
+  assert.match(await region.getByRole('tooltip').innerText(), /17\s*%/);
+});
+
+test('history: day details offers a large narrow-panel control with exact grouped values and clears an out-of-range selection', async t => {
+  const next = historySnapshot();
+  const page = await pageFor(t, next, 'Europe/Moscow', { viewport: { width: 320, height: 900 } });
+  const region = await historyRegion(page);
+  await region.getByRole('button', { name: '30 days', exact: true }).click();
+  const days = region.getByRole('combobox', { name: 'Day details', exact: true });
+  assert.equal(await days.count(), 1, 'Thirty-day charts offer a native accessible alternative to narrow bar targets');
+  assert.equal(await days.evaluate(node => node.tagName), 'SELECT');
+  const target = await days.boundingBox();
+  assert.ok(target && target.height >= 40 && target.width >= 24, 'Day details has a large usable touch target at 320px');
+  await days.focus();
+  assert.equal(await days.evaluate(node => node === document.activeElement), true);
+  await days.selectOption({ label: '2026.10.26' });
+  const detail = region.getByRole('region', { name: 'Day details', exact: true });
+  assert.equal(await detail.count(), 1, 'Chosen-day values are exposed as a labelled inline region');
+  assert.equal(await detail.isVisible(), true);
+  assert.match(await detail.innerText(), /2026\.10\.26[\s\S]*10\s*%/);
+  assert.match(await detail.innerText(), /Chats[^\n]*3\s*%/);
+  assert.match(await detail.innerText(), /Subagents[^\n]*2\s*%/);
+  await days.selectOption({ label: '2026.10.27' });
+  assert.match(await detail.innerText(), /2026\.10\.27[\s\S]*0\s*%/, 'Explicit zero is selectable and reported exactly');
+  await days.selectOption({ label: '2026.10.26' });
+  await region.getByRole('combobox', { name: 'Group by', exact: true }).selectOption({ label: 'By surface' });
+  assert.match(await detail.innerText(), /cli[^\n]*8\s*%/i);
+  assert.match(await detail.innerText(), /web[^\n]*2\s*%/i);
+  assert.doesNotMatch(await detail.innerText(), /Chats|Subagents/, 'Details follow the current grouping');
+  await page.getByRole('tab', { name: 'Overview', exact: true }).click();
+  await historyRegion(page);
+  assert.equal(await days.locator('option:checked').innerText(), '2026.10.26', 'Valid day selection survives tab return');
+  await region.getByRole('button', { name: 'Previous', exact: true }).click();
+  assert.match(await region.locator('.history-range').innerText(), /2026\.08\.29[\s\S]*2026\.09\.27/);
+  assert.doesNotMatch(await region.getByRole('region', { name: 'Day details', exact: true }).allTextContents().then(parts => parts.join('\n')), /2026\.10\.26|10\s*%/, 'A range change cannot retain out-of-range day details');
+  assert.equal(await region.getByRole('combobox', { name: 'Day details', exact: true }).locator('option:checked').filter({ hasText: '2026.10.26' }).count(), 0);
+});
+
 test('graphical Overview renders real progress and preserves report semantics on state updates', async t => {
   const page = await pageFor(t);
   assert.equal(await page.getByRole('tab', { name: 'Overview', exact: true }).count(), 1, 'Overview is a native report tab');
@@ -238,7 +438,7 @@ function refinementSnapshot() {
 }
 const historySection = (page, title) => page.getByRole('heading', { name: title, exact: true }).locator('..');
 const datedCell = (section, date) => section.getByLabel(new RegExp(`^${date.replaceAll('.', '\\.')}\\b`));
-const period = (page, name) => page.getByRole('button', { name, exact: true });
+const period = (page, name) => page.getByRole('group', { name: 'History period', exact: true }).getByRole('button', { name, exact: true });
 
 // These fixtures include legacy lines during RED so failures describe visible behavior,
 // rather than the current renderer failing to load the new typed contract.
