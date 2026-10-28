@@ -4,7 +4,7 @@ import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { chromium } from '@playwright/test';
-import { harness, root, timestamp } from './helpers.js';
+import { harness, root, timestamp, plugins, skills } from './helpers.js';
 
 const snapshot = {
   summary: 'Codex usage · 75% left',
@@ -102,6 +102,212 @@ async function messagesRegion(page) {
   assert.equal(await region.count(), 1, 'Analytics exposes an independent labelled Messages region');
   return region;
 }
+
+const toolsSnapshot = () => ({ ...messagesSnapshot(), plugins: {
+  startDate: '2026-09-28', endDate: '2026-10-27', data: structuredClone(plugins.data), dataAsOf: Date.parse(plugins.data_freshness_ts), updatedAt: timestamp, stale: false, error: null,
+}, skills: {
+  startDate: '2026-09-28', endDate: '2026-10-27', data: structuredClone(skills.data), dataAsOf: Date.parse(skills.data_freshness_ts), updatedAt: timestamp, stale: false, error: null,
+} });
+async function toolsRegions(page) {
+  await page.getByRole('tab', { name: 'Analytics', exact: true }).click();
+  const plugins = page.getByRole('region', { name: 'Plugins', exact: true });
+  const skills = page.getByRole('region', { name: 'Skills', exact: true });
+  assert.equal(await plugins.count(), 1, 'Analytics exposes a labelled Plugins card');
+  assert.equal(await skills.count(), 1, 'Analytics exposes a separate labelled Skills card');
+  return { plugins, skills };
+}
+
+test('tools: inline named charts report top-ten subtotals, keep namespaces distinct, and render display names as safe text', async t => {
+  const next = toolsSnapshot();
+  next.plugins.data[0].plugin_usage_overviews.push(
+    { plugin_name: 'files', display_name: 'Files', marketplace: 'community', invocation_counts: 2 },
+    { plugin_name: 'safe', display_name: '<img src=x onerror=alert(1)>', marketplace: 'official', invocation_counts: 0 },
+  );
+  const page = await pageFor(t, next);
+  const regions = await toolsRegions(page);
+  const headings = await page.getByRole('tabpanel').getByRole('heading').allTextContents();
+  for (const [before, after] of [['Messages', 'Plugins'], ['Plugins', 'Skills'], ['Skills', 'All-time statistics']]) assert.ok(headings.indexOf(before) < headings.indexOf(after));
+  assert.deepEqual(await page.getByRole('tab').allTextContents(), ['Overview', 'Analytics']);
+  for (const [name, count] of [['plugins', 7], ['skills', 3]]) {
+    const region = regions[name];
+    assert.match(await region.innerText(), new RegExp(`Reported subtotal[^\\n]*\\b${count}\\b`, 'i'));
+    assert.match(await region.innerText(), /top\s*10[^\n]*(?:per day|daily)|(?:per day|daily)[^\n]*top\s*10/i);
+    assert.doesNotMatch(await region.innerText(), /grand total|reported total|Other:/i);
+    const chart = region.locator('svg.usage-chart');
+    assert.equal(await chart.count(), 1);
+    assert.ok(await chart.locator('path, polyline').count() >= 1);
+    assert.match(await chart.textContent(), /10\.26/);
+    const ticks = await chart.locator('text[x="30"][text-anchor="end"]').allTextContents();
+    assert.ok(ticks.length >= 2 && ticks.every(text => /^\d+$/.test(text)), 'Invocation axis has integer ticks');
+    await region.getByRole('combobox', { name: 'Day details', exact: true }).selectOption({ label: '2026.10.26' });
+  }
+  const detail = await regions.plugins.getByRole('region', { name: 'Day details', exact: true }).innerText();
+  assert.match(detail, /Files[^\n]*\b5\b/);
+  assert.match(detail, /Files[^\n]*\b2\b/, 'Same plugin name from another marketplace is not merged');
+  assert.ok(detail.includes('<img src=x onerror=alert(1)>'));
+  assert.equal(await regions.plugins.locator('img').count(), 0);
+  assert.match(await regions.skills.getByRole('region', { name: 'Day details', exact: true }).innerText(), /Review[^\n]*\b3\b/);
+  assert.deepEqual(await page.evaluate(() => [window.probe.pluginsCalls.length, window.probe.skillsCalls.length]), [0, 0]);
+});
+
+test('tools: independent thirty-day defaults and seven-day navigation preserve all card filters and token reading state across tabs/updates', async t => {
+  const next = toolsSnapshot();
+  const page = await pageFor(t, next);
+  let regions = await toolsRegions(page);
+  const history = page.getByRole('region', { name: 'Usage history', exact: true });
+  const messages = page.getByRole('region', { name: 'Messages', exact: true });
+  await history.getByRole('combobox', { name: 'Group by', exact: true }).selectOption({ label: 'By model' });
+  await history.getByRole('combobox', { name: 'Day details', exact: true }).selectOption({ label: '2026.10.26' });
+  await messages.getByRole('combobox', { name: 'Group by', exact: true }).selectOption({ label: 'By surface' });
+  const scroll = page.locator('.heatmap-scroll').first();
+  await scroll.evaluate(node => { node.scrollLeft = 31; });
+  const readingPosition = await scroll.evaluate(node => node.scrollLeft);
+  for (const region of Object.values(regions)) {
+    assert.equal(await region.getByRole('button', { name: '30 days', exact: true }).getAttribute('aria-pressed'), 'true');
+    assert.equal(await region.getByRole('button', { name: 'Next', exact: true }).isDisabled(), true);
+  }
+  await regions.plugins.getByRole('button', { name: '7 days', exact: true }).click();
+  assert.deepEqual(await page.evaluate(() => window.probe.pluginsCalls.at(-1)), { startDate: '2026-10-21', endDate: '2026-10-27' });
+  await regions.plugins.getByRole('button', { name: 'Previous', exact: true }).click();
+  assert.deepEqual(await page.evaluate(() => window.probe.pluginsCalls.at(-1)), { startDate: '2026-10-14', endDate: '2026-10-20' });
+  await regions.plugins.getByRole('button', { name: 'Next', exact: true }).click();
+  await regions.plugins.getByRole('combobox', { name: 'Day details', exact: true }).selectOption({ label: '2026.10.26' });
+  await regions.skills.getByRole('combobox', { name: 'Day details', exact: true }).selectOption({ label: '2026.10.26' });
+  next.plugins = { ...next.plugins, startDate: '2026-10-21' };
+  await page.evaluate(state => window.probe.publish(state), next);
+  await page.getByRole('tab', { name: 'Overview', exact: true }).click();
+  regions = await toolsRegions(page);
+  assert.equal(await regions.plugins.getByRole('button', { name: '7 days', exact: true }).getAttribute('aria-pressed'), 'true');
+  assert.equal(await regions.skills.getByRole('button', { name: '30 days', exact: true }).getAttribute('aria-pressed'), 'true');
+  for (const region of Object.values(regions)) assert.match(await region.getByRole('region', { name: 'Day details', exact: true }).innerText(), /2026\.10\.26/);
+  assert.equal(await history.getByRole('combobox', { name: 'Group by', exact: true }).locator('option:checked').innerText(), 'By model');
+  assert.match(await history.getByRole('region', { name: 'Day details', exact: true }).innerText(), /2026\.10\.26/);
+  assert.equal(await messages.getByRole('combobox', { name: 'Group by', exact: true }).locator('option:checked').innerText(), 'By surface');
+  assert.equal(await scroll.evaluate(node => node.scrollLeft), readingPosition);
+  assert.equal(await page.getByRole('group', { name: 'History period', exact: true }).getByRole('button', { name: 'Year', exact: true }).getAttribute('aria-pressed'), 'true');
+  await page.evaluate(async () => { window.probe.close(); await window.probe.mount(); });
+  regions = await toolsRegions(page);
+  for (const region of Object.values(regions)) {
+    assert.equal(await region.getByRole('button', { name: '30 days', exact: true }).getAttribute('aria-pressed'), 'true');
+    assert.match(await region.innerText(), /2026\.09\.28[\s\S]*2026\.10\.27/);
+  }
+});
+
+test('tools: exact native day details distinguishes unknown gaps, true zero, partial/stale source data and empty cards', async t => {
+  const next = toolsSnapshot();
+  next.plugins.data = [
+    { date: '2026-10-24', plugin_usage_overviews: [{ plugin_name: 'files', display_name: 'Files', marketplace: 'official', invocation_counts: null }] },
+    { date: '2026-10-25', plugin_usage_overviews: [{ plugin_name: 'files', display_name: 'Files', marketplace: 'official', invocation_counts: 0 }] },
+    { date: '2026-10-26', plugin_usage_overviews: [{ plugin_name: 'files', display_name: 'Files', marketplace: 'official', invocation_counts: 5 }, { plugin_name: 'unknown', invocation_counts: null }] },
+  ];
+  const page = await pageFor(t, next, 'Europe/Moscow', { viewport: { width: 320, height: 900 } });
+  const regions = await toolsRegions(page);
+  const days = regions.plugins.getByRole('combobox', { name: 'Day details', exact: true });
+  assert.equal(await days.evaluate(node => node.tagName), 'SELECT');
+  const box = await days.boundingBox();
+  assert.ok(box && box.height >= 40 && box.width >= 24);
+  await days.focus();
+  assert.equal(await days.evaluate(node => node === document.activeElement), true);
+  assert.ok(!(await days.locator('option').allTextContents()).some(label => /2026\.10\.24|2026\.10\.27/.test(label)), 'Unknown supplied and absent days are not fabricated as zero');
+  await days.selectOption({ label: '2026.10.25' });
+  const detail = regions.plugins.getByRole('region', { name: 'Day details', exact: true });
+  assert.match(await detail.innerText(), /Files[^\n]*\b0\b/);
+  await days.selectOption({ label: '2026.10.26' });
+  assert.match(await detail.innerText(), /Files[^\n]*\b5\b/);
+  assert.match(await detail.innerText(), /missing|known|partial|incomplete/i);
+  assert.match(await regions.plugins.innerText(), /data as of[^\n]*2026\.10\.27/i);
+  next.plugins = { ...next.plugins, stale: true, error: 'Plugins unavailable' };
+  await page.evaluate(state => window.probe.publish(state), next);
+  assert.match(await regions.plugins.innerText(), /stale/i);
+  assert.match(await regions.plugins.innerText(), /unavailable/i);
+  assert.doesNotMatch(await regions.skills.innerText(), /stale|unavailable/i);
+  next.plugins = { ...next.plugins, data: [], stale: false, error: null, dataAsOf: null };
+  await page.evaluate(state => window.probe.publish(state), next);
+  assert.match(await regions.plugins.innerText(), /no[^\n]*(?:data|activity|usage)|empty/i);
+  assert.match(await regions.plugins.innerText(), /data as of[^\n]*unknown/i);
+  assert.equal(await page.getByRole('heading', { name: 'Daily', exact: true }).count(), 1);
+});
+
+test('tools: omitted dates qualify the selected-range subtotal without inventing zero points or day details', async t => {
+  const next = toolsSnapshot();
+  next.plugins.data[0].plugin_usage_overviews[0].invocation_counts = 10;
+  next.skills.data[0].skill_usage_overviews[0].invocation_counts = 10;
+  const page = await pageFor(t, next);
+  const regions = await toolsRegions(page);
+  for (const region of Object.values(regions)) {
+    await region.getByRole('button', { name: '7 days', exact: true }).click();
+    const subtotal = region.locator('.quota-value');
+    assert.match(await subtotal.innerText(), /\b10\b/);
+    assert.match(await subtotal.innerText(), /partial|known/i, 'An absent source date is unknown and must qualify the selected-range subtotal');
+    const days = region.getByRole('combobox', { name: 'Day details', exact: true });
+    const options = await days.locator('option').allTextContents();
+    assert.ok(options.some(label => label.includes('2026.10.26')), 'Known supplied day remains inspectable');
+    assert.ok(!options.some(label => /2026\.10\.25|2026\.10\.27/.test(label)), 'Omitted dates are not invented as zero-valued days');
+    const pointDescriptions = await region.locator('svg.usage-chart title').allTextContents();
+    assert.ok(pointDescriptions.length >= 1 && pointDescriptions.every(text => text.includes('2026.10.26')), 'Only the known supplied day produces plotted points');
+    await days.selectOption({ label: '2026.10.26' });
+    assert.match(await region.getByRole('region', { name: 'Day details', exact: true }).innerText(), /\b10\b/);
+  }
+});
+
+test('tools: seventeen reported identities chart the top eight plus known Other while exact day details retain every name', async t => {
+  const next = toolsSnapshot();
+  const rows = Array.from({ length: 17 }, (_, index) => ({ plugin_name: `tool-${String(index + 1).padStart(2, '0')}`, display_name: `Tool ${String(index + 1).padStart(2, '0')}`, marketplace: 'official', invocation_counts: index + 1 }));
+  next.plugins.data = [{ date: '2026-10-26', plugin_usage_overviews: [...rows, { plugin_name: 'unknown-tool', display_name: 'Unknown tool', marketplace: 'official', invocation_counts: null }] }];
+  const page = await pageFor(t, next);
+  const { plugins: region } = await toolsRegions(page);
+  const chart = region.locator('svg.usage-chart');
+  const groupedLines = chart.locator('path, polyline');
+  assert.equal(await groupedLines.count() - 1, 9, 'Seventeen reported identities use eight top-name lines plus Other reported, alongside the subtotal line');
+  const legend = await region.locator('.usage-legend li').allTextContents();
+  assert.equal(legend.filter(label => /Other reported/i.test(label)).length, 1, 'Known remaining identities have an explicit reported-only legend key');
+  for (let index = 10; index <= 17; index++) assert.ok(legend.some(label => label.includes(`Tool ${index}`)), `Top identity Tool ${index} remains a named chart series`);
+  for (let index = 1; index <= 9; index++) assert.ok(!legend.some(label => label.includes(`Tool ${String(index).padStart(2, '0')}`)), 'Lower-ranked names are grouped in the chart only');
+  const pointKeys = await chart.evaluate(svg => [...svg.querySelectorAll('circle, ellipse, rect, polygon, use')].slice(1).map(mark => {
+    const style = getComputedStyle(mark);
+    return JSON.stringify([mark.tagName, style.fill, style.stroke, style.strokeWidth, style.strokeDasharray]);
+  }));
+  assert.equal(pointKeys.length, 9, 'Sparse known-only grouping produces one marker for each of the nine plotted identities');
+  assert.equal(new Set(pointKeys).size, 9, 'The nine sparse marker keys remain visually distinct');
+  const pointDescriptions = (await chart.locator('title').allTextContents()).join('\n');
+  assert.match(pointDescriptions, /Other reported[^\n]*\b45\b/, 'Other reported sums only returned counts 1 through 9');
+  assert.doesNotMatch(pointDescriptions, /Unknown tool[^\n]*\b0\b/, 'Unknown source count is not a zero contribution');
+  const days = region.getByRole('combobox', { name: 'Day details', exact: true });
+  assert.ok(!(await days.locator('option').allTextContents()).some(label => label.includes('2026.10.27')), 'Omitted source dates remain gaps');
+  await days.selectOption({ label: '2026.10.26' });
+  const detail = await region.getByRole('region', { name: 'Day details', exact: true }).innerText();
+  for (const row of rows) assert.match(detail, new RegExp(`${row.display_name}[^\\n]*\\b${row.invocation_counts}\\b`), 'Exact details retain every returned identity and count');
+  assert.match(await region.locator('.quota-value').innerText(), /\b153\b/);
+  assert.match(await region.locator('.quota-value').innerText(), /partial|known/i);
+});
+
+test('tools: a full refresh settles overlapping tool ranges and includes all four selected card ranges', async t => {
+  const next = toolsSnapshot();
+  const page = await pageFor(t, next);
+  const regions = await toolsRegions(page);
+  await page.evaluate(() => { window.probe.deferNextPlugins(); window.probe.deferNextSkills(); });
+  await regions.plugins.getByRole('button', { name: '7 days', exact: true }).click();
+  await regions.skills.getByRole('button', { name: 'Previous', exact: true }).click();
+  await page.waitForFunction(() => typeof window.probe.resolvePlugins === 'function' && typeof window.probe.resolveSkills === 'function');
+  assert.match(await regions.plugins.innerText(), /loading/i);
+  assert.match(await regions.skills.innerText(), /loading/i);
+  next.plugins = { ...next.plugins, startDate: '2026-10-21' };
+  next.skills = { ...next.skills, startDate: '2026-08-29', endDate: '2026-09-27', data: [{ date: '2026-09-26', skill_usage_overviews: [{ skill_name: 'review', display_name: 'Review', invocation_counts: 19 }] }] };
+  try {
+    await page.evaluate(async state => { window.probe.publish(state); await window.probe.tick(); }, next);
+    assert.doesNotMatch(await regions.plugins.innerText(), /loading/i);
+    assert.doesNotMatch(await regions.skills.innerText(), /loading/i);
+    assert.deepEqual(await page.evaluate(() => window.probe.refreshInputs.at(-1)), {
+      historyRange: { startDate: '2026-10-21', endDate: '2026-10-27' }, messagesRange: { startDate: '2026-10-21', endDate: '2026-10-27' },
+      pluginsRange: { startDate: '2026-10-21', endDate: '2026-10-27' }, skillsRange: { startDate: '2026-08-29', endDate: '2026-09-27' },
+    });
+    await page.evaluate(async () => { window.probe.resolveSkills({ verified: false }); await Promise.resolve(); window.probe.resolvePlugins({ verified: false }); await Promise.resolve(); });
+    assert.doesNotMatch(await regions.plugins.innerText(), /loading|unavailable/i);
+    assert.doesNotMatch(await regions.skills.innerText(), /loading|unavailable/i);
+    await regions.skills.getByRole('combobox', { name: 'Day details', exact: true }).selectOption({ label: '2026.09.26' });
+    assert.match(await regions.skills.getByRole('region', { name: 'Day details', exact: true }).innerText(), /Review[^\n]*\b19\b/);
+  } finally { await page.evaluate(() => { window.probe.resolvePlugins?.({ verified: false }); window.probe.resolveSkills?.({ verified: false }); }); }
+});
 
 test('messages: range subtotal remains qualified when another supplied day has wholly unknown counts', async t => {
   const next = messagesSnapshot();
@@ -321,7 +527,10 @@ test('messages: reversed card requests plus full refresh settle both cards and p
     await page.evaluate(async state => { window.probe.publish(state); await window.probe.tick(); }, next);
     assert.doesNotMatch(await region.innerText(), /loading/i);
     assert.doesNotMatch(await history.innerText(), /loading/i);
-    assert.deepEqual(await page.evaluate(() => window.probe.refreshInputs.at(-1)), { historyRange: { startDate: '2026-10-14', endDate: '2026-10-20' }, messagesRange: { startDate: '2026-10-14', endDate: '2026-10-20' } });
+    assert.deepEqual(await page.evaluate(() => {
+      const { historyRange, messagesRange } = window.probe.refreshInputs.at(-1);
+      return { historyRange, messagesRange };
+    }), { historyRange: { startDate: '2026-10-14', endDate: '2026-10-20' }, messagesRange: { startDate: '2026-10-14', endDate: '2026-10-20' } });
     await page.evaluate(async () => { window.probe.resolveMessages({ verified: false }); await Promise.resolve(); window.probe.resolveHistory({ verified: false }); await Promise.resolve(); });
     assert.doesNotMatch(await region.innerText(), /loading|unavailable/i);
     assert.doesNotMatch(await history.innerText(), /loading|unavailable/i);

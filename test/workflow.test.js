@@ -135,6 +135,8 @@ test('details refresh cancelled by compact hide reports that identity was not ve
   await service.refresh({}, {});
   assert.equal(h.snapshot().overview.windows[0].usedPercent, 25);
   assert.deepEqual(h.requests.map(request => new URL(request.url).pathname).sort(), [
+    '/backend-api/wham/analytics/daily-plugin-usage-metrics',
+    '/backend-api/wham/analytics/daily-skill-usage-metrics',
     '/backend-api/wham/analytics/daily-workspace-usage-counts',
     '/backend-api/wham/profiles/me',
     '/backend-api/wham/usage',

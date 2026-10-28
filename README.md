@@ -44,7 +44,8 @@ current compact widget; changed output may show it again. Use the Hide command
 for durable hiding.
 
 The right report has two keyboard-accessible tabs: **Overview** for graphical
-quota meters and supplied account details, and **Analytics** for Usage history, Messages, all-time metrics,
+quota meters and supplied account details, and **Analytics** for Usage history,
+Messages, Plugins, Skills, all-time metrics,
 invocation details and daily, cumulative and weekly charts with calendar heatmaps. Close it
 with the native workbench control; Hide affects compact only. A mounted report
 refreshes on entry and every three minutes. Closing/disposal stops its frontend
@@ -77,7 +78,7 @@ Empty data, source errors and retained stale values have separate feedback.
 Only the current account and selected range can reuse last-good history; changing
 the range requests history alone when the account is unchanged. If Pi resolves a
 different account, that refresh also reloads its subscription limits, token
-profile and Messages. Compact refreshes continue to request only limits and the
+profile and all four dated cards. Compact refreshes continue to request only limits and the
 token profile.
 
 ### Messages
@@ -106,8 +107,33 @@ does not fabricate a zero for a missing day.
 Messages has its own local successful-fetch time, stale/error feedback and
 account/range cache. **Data as of** remains unknown when the source supplies no
 freshness timestamp. The card contains counts only, without token, credit or
-user-count fields. Account changes clear all four report sources and the next
+user-count fields. Account changes clear all six report sources and the next
 public refresh reloads them, including when compact discovered the new account.
+
+### Plugins and Skills
+
+Two named invocation-count charts follow Messages. Each defaults to the latest
+**30 days**, with its own **7 days / 30 days**, **Previous / Next** and native
+**Day details** selector. Their ranges and selected days survive tab changes and
+live updates independently; reopening restores 30 days. A same-account range
+change fetches only that card.
+
+These sources return the **top 10 per day**. The report retains every supplied
+name across the selected days, so a range can contain more than ten names. Charts
+show the eight names with the highest known counts in the window; identity keys
+break ties consistently. **Other reported** combines only returned known counts
+for the remaining names. Day details retains every original named count.
+Sums are **Reported subtotal**, qualified as partial when dates or counts are
+unknown. They do not represent all tool activity; no unreported usage is inferred
+for Other reported. Missing days and unknown counts remain gaps; explicit zero
+remains inspectable. Line patterns and filled/outlined markers repeat in legends.
+
+Plugin identity combines its source name and marketplace, keeping namespaces
+separate. Skill identity uses its source name. Display names are plain text;
+source names and marketplace labels keep identities readable. Plugin IDs and
+skill IDs are excluded from the report. Each card has its own stale/error state
+and local successful-fetch time. **Data as of** uses the source freshness timestamp
+when supplied, and says unknown when absent.
 
 ### Token calendars
 
@@ -157,7 +183,7 @@ quota percentage is `100 − used percentage`. Other metrics come directly from
 the server: the extension does not estimate subscription token costs or invent
 token totals, reset credits or analytics endpoints.
 
-Limits, token analytics, Usage history and Messages keep separate last-success timestamps in memory. A failed,
+All six sources keep separate last-success timestamps in memory. A failed,
 timed-out or malformed source update leaves its previous report marked **stale**,
 while a successful source can still update. Stale data is retained only after Pi
 successfully resolves the same current account using its `ChatGPT-Account-Id`
@@ -186,6 +212,8 @@ https://chatgpt.com/backend-api/wham/usage
 https://chatgpt.com/backend-api/wham/profiles/me
 https://chatgpt.com/backend-api/wham/usage/daily-token-usage-breakdown
 https://chatgpt.com/backend-api/wham/analytics/daily-workspace-usage-counts
+https://chatgpt.com/backend-api/wham/analytics/daily-plugin-usage-metrics
+https://chatgpt.com/backend-api/wham/analytics/daily-skill-usage-metrics
 ```
 
 History sends the selected `start_date`, `end_date`, `group_by=day` query and the
@@ -197,6 +225,11 @@ Messages sends its selected `start_date`, `end_date`, `group_by=day` and
 `workspace_user=true`. Only sanitized source dates, total message counts and
 model/client message counts enter that card. Neither card requests private
 thread contents or account mutations.
+
+Plugins and Skills send their selected dates, `group_by=day`,
+`workspace_user=true` and respectively `top_plugin_limit=10` or
+`top_skill_limit=10`. Only source dates, safe names/marketplace labels, invocation
+counts and the supplied freshness timestamp enter these cards.
 
 It checks Pi's provider and effective auth origins before sending credentials,
 and rejects redirects. These are private ChatGPT endpoints and may change or

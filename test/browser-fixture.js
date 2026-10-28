@@ -1,5 +1,5 @@
 const config = window.fixtureConfig;
-const probe = window.probe = { calls: 0, historyCalls: [], messagesCalls: [], refreshInputs: [], timers: new Map(), disposed: 0, unsubscribed: 0, error: null };
+const probe = window.probe = { calls: 0, historyCalls: [], messagesCalls: [], pluginsCalls: [], skillsCalls: [], refreshInputs: [], timers: new Map(), disposed: 0, unsubscribed: 0, error: null };
 const theme = { mode: 'dark', background: '#1d1d1c', foreground: '#d3d3cf', accent: '#7aa2f7' };
 probe.changeTheme = next => {
   Object.assign(theme, next);
@@ -31,6 +31,22 @@ const service = { state, async refreshHistory(range) {
   }
   probe.publish({ ...state.value, messages: { ...state.value.messages, ...range } });
   return { verified: true };
+}, async refreshPlugins(range) {
+  probe.pluginsCalls.push(range);
+  if (config.deferredPlugins) {
+    config.deferredPlugins = false;
+    return new Promise(resolve => { probe.resolvePlugins = resolve; });
+  }
+  probe.publish({ ...state.value, plugins: { ...state.value.plugins, ...range } });
+  return { verified: true };
+}, async refreshSkills(range) {
+  probe.skillsCalls.push(range);
+  if (config.deferredSkills) {
+    config.deferredSkills = false;
+    return new Promise(resolve => { probe.resolveSkills = resolve; });
+  }
+  probe.publish({ ...state.value, skills: { ...state.value.skills, ...range } });
+  return { verified: true };
 }, async refresh(input) {
   probe.calls++;
   probe.refreshInputs.push(input);
@@ -50,6 +66,8 @@ probe.abort = () => controller?.abort();
 probe.deferNextRefresh = () => { config.deferredRefresh = true; };
 probe.deferNextHistory = () => { config.deferredHistory = true; };
 probe.deferNextMessages = () => { config.deferredMessages = true; };
+probe.deferNextPlugins = () => { config.deferredPlugins = true; };
+probe.deferNextSkills = () => { config.deferredSkills = true; };
 probe.mount = async () => {
   if (!config.frontend) return;
   controller = new AbortController();

@@ -57,18 +57,20 @@ function chartControls(prefix, view, groupOptions, changeRange, changeGrouping, 
     };
     controls.append(button);
   }
-  const label = element('label', 'Group by');
-  const select = element('select');
-  select.dataset.control = `${prefix}-group`;
-  for (const [name, field] of groupOptions) {
-    const option = element('option', name);
-    option.value = field;
-    option.selected = grouping === field;
-    select.append(option);
+  if (groupOptions.length) {
+    const label = element('label', 'Group by');
+    const select = element('select');
+    select.dataset.control = `${prefix}-group`;
+    for (const [name, field] of groupOptions) {
+      const option = element('option', name);
+      option.value = field;
+      option.selected = grouping === field;
+      select.append(option);
+    }
+    select.onchange = () => changeGrouping(select.value);
+    label.append(select);
+    controls.append(label);
   }
-  select.onchange = () => changeGrouping(select.value);
-  label.append(select);
-  controls.append(label);
   const dayLabel = element('label', 'Day details');
   const daySelect = element('select');
   daySelect.dataset.control = `${prefix}-day`;
@@ -231,30 +233,78 @@ function messageDays(report, view) {
   }).filter(day => day.total != null);
 }
 
-function messagesChart(report, view, changeRange, changeGrouping, changeDay) {
+function toolDays(report, view, title) {
+  const plugin = title === 'Plugins';
+  const field = plugin ? 'plugin_usage_overviews' : 'skill_usage_overviews';
+  const supplied = report.data.filter(day => day.date >= view.range.startDate && day.date <= view.range.endDate);
+  const names = new Map();
+  const days = supplied.map(day => {
+    const groups = new Map();
+    for (const row of day[field]) {
+      const sourceName = plugin ? row.plugin_name : row.skill_name;
+      const key = plugin ? JSON.stringify([sourceName, row.marketplace ?? '']) : sourceName;
+      const displayName = row.display_name || sourceName;
+      names.set(key, [displayName, sourceName !== displayName ? sourceName : null, plugin ? row.marketplace : null].filter(Boolean).join(' · '));
+      if (row.invocation_counts != null) groups.set(key, (groups.get(key) ?? 0) + row.invocation_counts);
+    }
+    return {
+      date: day.date, groups, total: groups.size ? [...groups.values()].reduce((sum, count) => sum + count, 0) : null,
+      incomplete: !day[field].length || day[field].some(row => row.invocation_counts == null),
+    };
+  });
+  return { days: days.filter(day => day.total != null), names, incomplete: new Set(supplied.map(day => day.date)).size < view.days || days.some(day => day.incomplete) };
+}
+
+function countChart(title, report, view, changeRange, changeGrouping, changeDay) {
+  const tools = title !== 'Messages';
   const region = element('section', null, 'usage-history');
   region.setAttribute('role', 'region');
-  region.setAttribute('aria-label', 'Messages');
-  region.append(element('h2', 'Messages'));
-  const { controls, daySelect } = chartControls('messages', view, [['By model', 'models'], ['By surface', 'clients']], changeRange, changeGrouping, changeDay);
+  region.setAttribute('aria-label', title);
+  region.append(element('h2', title));
+  const { controls, daySelect } = chartControls(title.toLowerCase(), view, tools ? [] : [['By model', 'models'], ['By surface', 'clients']], changeRange, changeGrouping, changeDay);
   region.append(controls, element('p', `${calendarDate(view.range.startDate)} – ${calendarDate(view.range.endDate)}`, 'history-range'));
   if (view.loading || report.startDate !== view.range.startDate || report.endDate !== view.range.endDate) {
-    region.append(element('p', 'Loading messages…', 'freshness'));
+    region.append(element('p', `Loading ${title.toLowerCase()}…`, 'freshness'));
     return region;
   }
   region.append(freshness(report), element('p', `Data as of: ${report.dataAsOf == null ? 'unknown' : localDate(report.dataAsOf)}`, 'freshness'));
   if (report.error) region.append(element('p', report.error, 'error'));
-  const data = messageDays(report, view);
+  const activity = tools ? toolDays(report, view, title) : undefined;
+  const data = tools ? activity.days : messageDays(report, view);
+  const otherReported = Symbol('Other reported');
+  const name = key => key === otherReported ? 'Other reported' : activity?.names.get(key) ?? key;
   if (!data.length) {
-    if (!report.error) region.append(element('p', report.data.length ? 'No supplied message counts in this range' : 'No messages data in this range'));
+    if (!report.error) region.append(element('p', tools ? `No ${title.toLowerCase()} activity data in this range` : report.data.length ? 'No supplied message counts in this range' : 'No messages data in this range'));
     return region;
   }
-  const incomplete = report.data.some(day => day.date >= view.range.startDate && day.date <= view.range.endDate && (day.totals.turns == null || day[view.grouping].some(row => row.turns == null)));
+  const incomplete = tools ? activity.incomplete : report.data.some(day => day.date >= view.range.startDate && day.date <= view.range.endDate && (day.totals.turns == null || day[view.grouping].some(row => row.turns == null)));
   const total = data.reduce((sum, day) => sum + day.total, 0);
-  region.append(element('p', `${incomplete ? 'Known subtotal' : 'Reported total'}: ${amount(total)} messages`, 'quota-value'));
-  const describe = day => `${calendarDate(day.date)} · ${day.subtotal ? 'Known subtotal' : 'Total'} ${amount(day.total)} messages${day.incomplete ? '\nSome counts are missing' : ''}${day.discrepancy ? '\nGrouped counts exceed the reported total' : ''}\n${[...day.groups].map(([name, count]) => `${name}: ${amount(count)} messages`).join('\n')}`;
+  const unit = tools ? 'invocations' : 'messages';
+  region.append(element('p', `${tools ? `Reported subtotal${incomplete ? ' (partial)' : ''}` : incomplete ? 'Known subtotal' : 'Reported total'}: ${amount(total)} ${unit}`, 'quota-value'));
+  if (tools) region.append(element('p', 'Top 10 per day; supplied rows only', 'freshness'));
+  const describe = day => `${calendarDate(day.date)} · ${tools ? 'Reported subtotal' : day.subtotal ? 'Known subtotal' : 'Total'} ${amount(day.total)} ${unit}${day.incomplete ? '\nSome counts are missing' : ''}${day.discrepancy ? '\nGrouped counts exceed the reported total' : ''}\n${[...day.groups].map(([key, count]) => `${name(key)}: ${amount(count)} ${unit}`).join('\n')}`;
   appendDayDetails(region, daySelect, data, view.day, describe);
-  const keys = [...new Set(data.flatMap(day => [...day.groups.keys()]))];
+  let keys = [...new Set(data.flatMap(day => [...day.groups.keys()]))];
+  let chartData = data;
+  if (tools) {
+    const totals = new Map(keys.map(key => [key, data.reduce((sum, day) => sum + (day.groups.get(key) ?? 0), 0)]));
+    keys.sort((first, second) => totals.get(second) - totals.get(first) || (first < second ? -1 : first > second ? 1 : 0));
+    if (keys.length > 8) {
+      const named = new Set(keys.slice(0, 8));
+      keys = [...named, otherReported];
+      chartData = data.map(day => {
+        const groups = new Map();
+        let other;
+        for (const [key, count] of day.groups) {
+          if (named.has(key)) groups.set(key, count);
+          else other = (other ?? 0) + count;
+        }
+        if (other != null) groups.set(otherReported, other);
+        return { ...day, groups };
+      });
+      region.append(element('p', 'Chart: top eight names; Other reported sums returned known counts only.', 'freshness'));
+    }
+  }
   const color = key => key === null ? 'var(--foreground)' : `var(--usage-series-${keys.indexOf(key) % 8})`;
   const dash = key => key === null ? '4 3' : keys.indexOf(key) < 8 ? 'none' : `${Math.floor(keys.indexOf(key) / 8) * 2 + 4} 3`;
   const pointStyle = key => keys.indexOf(key) < 8 ? { fill: color(key) } : { fill: 'var(--background)', stroke: color(key), 'stroke-width': 1.5 };
@@ -262,15 +312,15 @@ function messagesChart(report, view, changeRange, changeGrouping, changeDay) {
   svg.classList.add('usage-chart');
   svg.setAttribute('viewBox', '0 0 360 220');
   svg.setAttribute('role', 'img');
-  svg.setAttribute('aria-label', 'Messages by day; exact counts in Day details');
-  const maximum = Math.max(1, ...data.flatMap(day => [day.total, ...day.groups.values()]));
+  svg.setAttribute('aria-label', `${title} by day; exact counts in Day details`);
+  const maximum = Math.max(1, ...chartData.flatMap(day => [day.total, ...day.groups.values()]));
   for (const count of new Set([0, Math.ceil(maximum / 2), maximum])) {
     const y = 175 - count / maximum * 145;
     svgShape(svg, 'line', { x1: 36, x2: 348, y1: y, y2: y, class: 'grid-line' });
     svgShape(svg, 'text', { x: 30, y: y + 4, 'text-anchor': 'end' }, String(count));
   }
   const firstDate = Date.parse(`${view.range.startDate}T00:00:00Z`);
-  const byDate = new Map(data.map(day => [day.date, day]));
+  const byDate = new Map(chartData.map(day => [day.date, day]));
   for (const key of [null, ...keys]) {
     let path = '';
     let connected = false;
@@ -301,7 +351,7 @@ function messagesChart(report, view, changeRange, changeGrouping, changeDay) {
     svgShape(swatch, 'line', { x1: 1, x2: 31, y1: 6, y2: 6, stroke: color(key), 'stroke-width': key === null ? 1 : 2, 'stroke-dasharray': dash(key) });
     svgShape(swatch, 'circle', { cx: 16, cy: 6, r: 3, ...pointStyle(key) });
     const item = element('li');
-    item.append(swatch, element('span', key === null ? incomplete ? 'Known total / subtotal' : 'Reported total' : key));
+    item.append(swatch, element('span', key === null ? tools ? 'Reported subtotal' : incomplete ? 'Known total / subtotal' : 'Reported total' : name(key)));
     legend.append(item);
   }
   region.append(svg, legend);
@@ -536,6 +586,10 @@ export async function mount(root, host) {
   const latestUsage = periodBounds(7);
   const historyView = { days: 7, range: { startDate: latestUsage.start, endDate: latestUsage.end }, grouping: 'thread_source', day: undefined, loading: false, epoch: 0 };
   const messagesView = { days: 7, range: { startDate: latestUsage.start, endDate: latestUsage.end }, grouping: 'models', day: undefined, loading: false, epoch: 0 };
+  const latestTools = periodBounds(30);
+  const pluginsView = { days: 30, range: { startDate: latestTools.start, endDate: latestTools.end }, day: undefined, loading: false, epoch: 0 };
+  const skillsView = { days: 30, range: { startDate: latestTools.start, endDate: latestTools.end }, day: undefined, loading: false, epoch: 0 };
+  const cardViews = [historyView, messagesView, pluginsView, skillsView];
 
   function render(resetScroll = false) {
     const focusedUsage = panel.querySelector('.usage-controls :focus')?.dataset.control;
@@ -571,7 +625,12 @@ export async function mount(root, host) {
       }
       if (snapshot.messages) {
         if (!messagesView.loading && snapshot.messages.startDate === messagesView.range.startDate && snapshot.messages.endDate === messagesView.range.endDate && !messageDays(snapshot.messages, messagesView).some(day => day.date === messagesView.day)) messagesView.day = undefined;
-        panel.append(messagesChart(snapshot.messages, messagesView, (range, days) => changeCardRange(messagesView, range, days, 'refreshMessages'), field => { messagesView.grouping = field; render(); }, day => { messagesView.day = day; render(); }));
+        panel.append(countChart('Messages', snapshot.messages, messagesView, (range, days) => changeCardRange(messagesView, range, days, 'refreshMessages'), field => { messagesView.grouping = field; render(); }, day => { messagesView.day = day; render(); }));
+      }
+      for (const [title, report, view, method] of [['Plugins', snapshot.plugins, pluginsView, 'refreshPlugins'], ['Skills', snapshot.skills, skillsView, 'refreshSkills']]) {
+        if (!report) continue;
+        if (!view.loading && report.startDate === view.range.startDate && report.endDate === view.range.endDate && !toolDays(report, view, title).days.some(day => day.date === view.day)) view.day = undefined;
+        panel.append(countChart(title, report, view, (range, days) => changeCardRange(view, range, days, method), undefined, day => { view.day = day; render(); }));
       }
       if (section.metrics.length) panel.append(element('h2', 'All-time statistics'), metricList(section.metrics));
       if (section.invocations.length) {
@@ -673,18 +732,17 @@ export async function mount(root, host) {
     if (disposed || refreshing) return;
     refreshing = true;
     const epoch = ++requestEpoch;
-    historyView.epoch = epoch;
-    messagesView.epoch = epoch;
+    for (const view of cardViews) view.epoch = epoch;
     try {
-      const result = await service.refresh({ historyRange: historyView.range, messagesRange: messagesView.range }, context);
+      const result = await service.refresh({ historyRange: historyView.range, messagesRange: messagesView.range, pluginsRange: pluginsView.range, skillsRange: skillsView.range }, context);
       if (!disposed) {
-        for (const view of [historyView, messagesView]) if (view.epoch === epoch) view.loading = false;
+        for (const view of cardViews) if (view.epoch === epoch) view.loading = false;
         acceptVerification(result, epoch);
         render();
       }
     } catch {
       if (!disposed) {
-        for (const view of [historyView, messagesView]) if (view.epoch === epoch) view.loading = false;
+        for (const view of cardViews) if (view.epoch === epoch) view.loading = false;
         acceptVerification(undefined, epoch, true);
         render();
       }

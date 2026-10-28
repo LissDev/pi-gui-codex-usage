@@ -144,9 +144,9 @@ function validateHistoryRange(range) {
   return { startDate: range.startDate, endDate: range.endDate };
 }
 
-function latestHistoryRange(timestamp) {
+function latestHistoryRange(timestamp, days = 7) {
   const end = new Date(timestamp);
-  const start = new Date(end.getFullYear(), end.getMonth(), end.getDate() - 6);
+  const start = new Date(end.getFullYear(), end.getMonth(), end.getDate() - days + 1);
   const key = day => `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`;
   return { startDate: key(start), endDate: key(end) };
 }
@@ -193,6 +193,32 @@ function messagesReport(body, range) {
   return { data, dataAsOf: null };
 }
 
+function toolsReport(body, range, kind) {
+  if (!object(body) || !Array.isArray(body.data) || (body.group_by != null && body.group_by !== 'day')) throw new Error('Invalid tool activity');
+  const field = `${kind}_usage_overviews`;
+  const nameField = `${kind}_name`;
+  const fields = kind === 'plugin' ? ['plugin_name', 'display_name', 'marketplace'] : ['skill_name', 'display_name'];
+  const data = body.data.map(day => {
+    if (!object(day) || !validDate(day.date) || !Array.isArray(day[field])) throw new Error('Invalid tool day');
+    const rows = day[field].map(row => {
+      if (!object(row) || typeof row[nameField] !== 'string' || !value(row[nameField]).trim()) throw new Error('Invalid tool name');
+      if (row.invocation_counts != null && (!Number.isInteger(row.invocation_counts) || row.invocation_counts < 0)) throw new Error('Invalid invocation count');
+      const cleaned = {};
+      for (const name of fields) {
+        if (row[name] == null) continue;
+        if (typeof row[name] !== 'string') throw new Error('Invalid tool label');
+        const text = value(row[name]).trim();
+        if (text) cleaned[name] = text;
+      }
+      return { ...cleaned, invocation_counts: row.invocation_counts ?? null };
+    });
+    return { date: day.date, [field]: rows };
+  }).filter(day => day.date >= range.startDate && day.date <= range.endDate).sort((first, second) => first.date.localeCompare(second.date));
+  const dataAsOf = body.data_freshness_ts == null ? null : typeof body.data_freshness_ts === 'string' ? Date.parse(body.data_freshness_ts) : NaN;
+  if (dataAsOf != null && !Number.isFinite(dataAsOf)) throw new Error('Invalid tool freshness');
+  return { data, dataAsOf };
+}
+
 function bounded(promise, signal) {
   return new Promise((resolve, reject) => {
     const aborted = () => reject(new Error('Cancelled'));
@@ -217,8 +243,10 @@ export default function codexUsage(pi, services = {}) {
   let sections = {};
   let detailsInitialized = false;
   const cards = {
-    History: { range: latestHistoryRange(now()), version: 0, section: undefined },
-    Messages: { range: latestHistoryRange(now()), version: 0, section: undefined },
+    History: { defaultDays: 7, range: latestHistoryRange(now()), version: 0, section: undefined },
+    Messages: { defaultDays: 7, range: latestHistoryRange(now()), version: 0, section: undefined },
+    Plugins: { defaultDays: 30, range: latestHistoryRange(now(), 30), version: 0, section: undefined },
+    Skills: { defaultDays: 30, range: latestHistoryRange(now(), 30), version: 0, section: undefined },
   };
   let reportState;
   let sessionContext;
@@ -235,7 +263,14 @@ export default function codexUsage(pi, services = {}) {
       analytics: { metrics: analytics?.metrics ?? [], invocations: analytics?.invocations ?? [], daily: analytics?.daily ?? [], cumulative: analytics?.cumulative ?? [], weekly: analytics?.weekly ?? [], updatedAt: analytics?.at ?? null, stale: analytics?.stale ?? false, error: authMessage ?? analytics?.error ?? (analytics ? null : 'Analytics unavailable') },
       history: { ...history.range, units: history.section?.units ?? null, data: history.section?.data ?? [], dataAsOf: history.section?.dataAsOf ?? null, updatedAt: history.section?.at ?? null, stale: history.section?.stale ?? false, error: authMessage ?? history.section?.error ?? (history.section ? null : 'Usage history unavailable') },
       messages: { ...messages.range, data: messages.section?.data ?? [], dataAsOf: messages.section?.dataAsOf ?? null, updatedAt: messages.section?.at ?? null, stale: messages.section?.stale ?? false, error: authMessage ?? messages.section?.error ?? (messages.section ? null : 'Messages unavailable') },
+      plugins: toolsSnapshot('Plugins', authMessage),
+      skills: toolsSnapshot('Skills', authMessage),
     };
+  }
+
+  function toolsSnapshot(title, authMessage) {
+    const card = cards[title];
+    return { ...card.range, data: card.section?.data ?? [], dataAsOf: card.section?.dataAsOf ?? null, updatedAt: card.section?.at ?? null, stale: card.section?.stale ?? false, error: authMessage ?? card.section?.error ?? (card.section ? null : `${title} unavailable`) };
   }
 
   const registration = registerDesktopView(pi, {
@@ -248,7 +283,7 @@ export default function codexUsage(pi, services = {}) {
         env.provide(CodexUsageDetails, {
           state: reportState,
           async refresh(input = {}) {
-            return { verified: sessionContext ? await refresh(sessionContext, { details: true, historyRange: input.historyRange, messagesRange: input.messagesRange }) === true : false };
+            return { verified: sessionContext ? await refresh(sessionContext, { details: true, historyRange: input.historyRange, messagesRange: input.messagesRange, pluginsRange: input.pluginsRange, skillsRange: input.skillsRange }) === true : false };
           },
           async refreshHistory(range) {
             const selected = validateHistoryRange(range);
@@ -257,6 +292,14 @@ export default function codexUsage(pi, services = {}) {
           async refreshMessages(range) {
             const selected = validateHistoryRange(range);
             return { verified: sessionContext ? await refresh(sessionContext, { details: true, card: 'Messages', messagesRange: selected }) === true : false };
+          },
+          async refreshPlugins(range) {
+            const selected = validateHistoryRange(range);
+            return { verified: sessionContext ? await refresh(sessionContext, { details: true, card: 'Plugins', pluginsRange: selected }) === true : false };
+          },
+          async refreshSkills(range) {
+            const selected = validateHistoryRange(range);
+            return { verified: sessionContext ? await refresh(sessionContext, { details: true, card: 'Skills', skillsRange: selected }) === true : false };
           },
         });
       },
@@ -378,8 +421,10 @@ export default function codexUsage(pi, services = {}) {
           const requestHeaders = new Headers(auth.headers);
           if (card) {
             const parameters = { start_date: range.startDate, end_date: range.endDate, group_by: 'day' };
-            if (title === 'Messages') parameters.workspace_user = 'true';
-            else requestHeaders.set('x-openai-codex-usage-categories', '1');
+            if (title === 'History') requestHeaders.set('x-openai-codex-usage-categories', '1');
+            else parameters.workspace_user = 'true';
+            if (title === 'Plugins') parameters.top_plugin_limit = '10';
+            if (title === 'Skills') parameters.top_skill_limit = '10';
             url.search = new URLSearchParams(parameters).toString();
           }
           const response = await bounded(fetch(url.href, { method: 'GET', headers: requestHeaders, redirect: 'error', signal }), signal);
@@ -410,6 +455,8 @@ export default function codexUsage(pi, services = {}) {
     const selected = {
       History: options.historyRange && validateHistoryRange(options.historyRange),
       Messages: options.messagesRange && validateHistoryRange(options.messagesRange),
+      Plugins: options.pluginsRange && validateHistoryRange(options.pluginsRange),
+      Skills: options.skillsRange && validateHistoryRange(options.skillsRange),
     };
     for (const [title, range] of Object.entries(selected)) {
       const card = cards[title];
@@ -421,7 +468,7 @@ export default function codexUsage(pi, services = {}) {
         card.section = undefined;
       }
     }
-    const versions = { History: cards.History.version, Messages: cards.Messages.version };
+    const versions = Object.fromEntries(Object.entries(cards).map(([title, card]) => [title, card.version]));
     const deadline = Date.now() + timeoutMs;
     const auth = await resolveAuth(ctx);
     const current = () => auth && auth.generation === generation && (!options.details || Object.keys(cards).every(title => options.card && options.card !== title || cards[title].version === versions[title]));
@@ -431,6 +478,8 @@ export default function codexUsage(pi, services = {}) {
     if (options.details) {
       if (!options.card || hydrateDetails || options.card === 'History') sources.push(['usage/daily-token-usage-breakdown', 'History', usageHistoryReport]);
       if (!options.card || hydrateDetails || options.card === 'Messages') sources.push(['analytics/daily-workspace-usage-counts', 'Messages', messagesReport]);
+      if (!options.card || hydrateDetails || options.card === 'Plugins') sources.push(['analytics/daily-plugin-usage-metrics', 'Plugins', (body, range) => toolsReport(body, range, 'plugin')]);
+      if (!options.card || hydrateDetails || options.card === 'Skills') sources.push(['analytics/daily-skill-usage-metrics', 'Skills', (body, range) => toolsReport(body, range, 'skill')]);
       detailsInitialized = true;
     }
     await Promise.all(sources.map(([path, title, format]) => readSource(auth, path, title, format, deadline)));
@@ -474,7 +523,7 @@ export default function codexUsage(pi, services = {}) {
       sections = {};
       detailsInitialized = false;
       for (const card of Object.values(cards)) {
-        card.range = latestHistoryRange(now());
+        card.range = latestHistoryRange(now(), card.defaultDays);
         card.section = undefined;
         card.version++;
       }

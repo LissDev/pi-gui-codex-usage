@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { harness, response, usage, analytics, endpoint, analyticsEndpoint, messagesPath, messages, secret, timestamp } from './helpers.js';
+import { harness, response, usage, analytics, endpoint, analyticsEndpoint, messagesPath, messages, pluginsPath, skillsPath, plugins, skills, secret, timestamp } from './helpers.js';
 
 const historyPath = '/backend-api/wham/usage/daily-token-usage-breakdown';
 const historyBody = marker => ({ units: 'percent', data: [{ date: '2026-10-26', attribution: [{ model: 'gpt-6.1-sol', value: marker }] }] });
@@ -12,7 +12,9 @@ const turn = () => new Promise(resolve => setImmediate(resolve));
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
 const backend = options => harness({ ...options, fetch: (url, init) => {
   const path = new URL(url).pathname;
-  assert.ok([new URL(endpoint).pathname, new URL(analyticsEndpoint).pathname, historyPath, messagesPath].includes(path), 'Only the four approved GET sources');
+  assert.ok([new URL(endpoint).pathname, new URL(analyticsEndpoint).pathname, historyPath, messagesPath, pluginsPath, skillsPath].includes(path), 'Only the six approved GET sources');
+  if (path === pluginsPath) return response(plugins);
+  if (path === skillsPath) return response(skills);
   if (options?.fetchSource) return options.fetchSource(url, init);
   if (String(url) === endpoint) return response(usage);
   if (String(url) === analyticsEndpoint) return response(analytics);
@@ -46,8 +48,8 @@ test('messages: full refresh publishes unaffected sections after a replacement M
   const before = h.requests.length;
   const full = h.detailsService().refresh();
   await turn();
-  assert.equal(h.requests.length, before + 4, 'All full-refresh sources reached fetch before range replacement');
   try {
+    assert.equal(h.requests.length, before + 6, 'All full-refresh sources reached fetch before range replacement');
     await refreshMessages(h)(past);
     assert.equal(report(h).data[0]?.totals.turns, 23, 'Replacement publishes before the unaffected pending sources');
     const nextLimits = structuredClone(usage);
@@ -223,7 +225,7 @@ test('messages: public account switches hydrate all four sources, including afte
     const before = h.requests.length;
     try {
       assert.equal((await refresh(range7)).verified, true);
-      assert.deepEqual(h.requests.slice(before).map(r => new URL(r.url).pathname).sort(), [messagesPath, new URL(analyticsEndpoint).pathname, new URL(endpoint).pathname, historyPath].sort(), 'First public refresh hydrates all four B sections immediately');
+      assert.deepEqual(h.requests.slice(before).map(r => new URL(r.url).pathname).sort(), [messagesPath, new URL(analyticsEndpoint).pathname, new URL(endpoint).pathname, historyPath, pluginsPath, skillsPath].sort(), 'First public refresh hydrates all six B sections immediately');
       assert.equal(h.snapshot().overview.windows[0]?.usedPercent, 22);
       assert.equal(h.snapshot().analytics.daily[0]?.tokens, 22);
       assert.equal(h.snapshot().history.data[0]?.attribution[0]?.value, 22);

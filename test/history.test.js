@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { harness, response, usage, analytics, endpoint, analyticsEndpoint, messagesPath, messages, secret, timestamp } from './helpers.js';
+import { harness, response, usage, analytics, endpoint, analyticsEndpoint, messagesPath, messages, pluginsPath, skillsPath, plugins, skills, secret, timestamp } from './helpers.js';
 
 const historyPath = '/backend-api/wham/usage/daily-token-usage-breakdown';
 const row = (value, fields = {}) => ({ thread_source: 'user', turn_trigger: 'composer', model: 'gpt-6.1-sol', surface: 'cli', value, ...fields });
@@ -11,6 +11,8 @@ const isHistory = url => new URL(url).pathname === historyPath;
 const backend = options => harness({ ...options, fetch: (url, init, count) => {
   if (String(url) === endpoint) return response(usage);
   if (String(url) === analyticsEndpoint) return response(analytics);
+  if (new URL(url).pathname === pluginsPath) return response(plugins);
+  if (new URL(url).pathname === skillsPath) return response(skills);
   if (new URL(url).pathname === messagesPath) return response(messages);
   assert.ok(isHistory(url), 'No unapproved source is requested');
   return options?.historyFetch ? options.historyFetch(url, init, count) : response(body());
@@ -142,6 +144,8 @@ test('history: a range refresh after an account switch immediately hydrates all 
         return response(statistics);
       }
       if (new URL(url).pathname === messagesPath) return response(messages);
+      if (new URL(url).pathname === pluginsPath) return response(plugins);
+      if (new URL(url).pathname === skillsPath) return response(skills);
       assert.ok(isHistory(url));
       return response({ units: 'percent', data: [{ date: '2026-10-26', attribution: [row(marker)] }] });
     },

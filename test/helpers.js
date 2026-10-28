@@ -6,6 +6,10 @@ const secret = 'TEST_ONLY_SECRET_NEVER_RENDER';
 const endpoint = 'https://chatgpt.com/backend-api/wham/usage';
 const analyticsEndpoint = 'https://chatgpt.com/backend-api/wham/profiles/me';
 const messagesPath = '/backend-api/wham/analytics/daily-workspace-usage-counts';
+const pluginsPath = '/backend-api/wham/analytics/daily-plugin-usage-metrics';
+const skillsPath = '/backend-api/wham/analytics/daily-skill-usage-metrics';
+const plugins = { group_by: 'day', data_freshness_ts: '2026-10-27T16:00:00Z', data: [{ date: '2026-10-26', plugin_usage_overviews: [{ plugin_name: 'files', display_name: 'Files', marketplace: 'official', invocation_counts: 5 }] }] };
+const skills = { group_by: 'day', data_freshness_ts: '2026-10-27T15:00:00Z', data: [{ date: '2026-10-26', skill_usage_overviews: [{ skill_name: 'review', display_name: 'Review', invocation_counts: 3 }] }] };
 const messages = { data: [{ date: '2026-10-26', totals: { turns: 8 }, models: [{ model: 'gpt-6.1-sol', turns: 8 }], clients: [{ client_id: 'CODEX_CLI', turns: 8 }] }] };
 const timestamp = Date.parse('2026-10-27T17:00:00Z');
 const usage = {
@@ -133,6 +137,8 @@ async function harness(options = {}) {
       requests.push({ url: String(url), init });
       const usageCount = requests.filter(r => r.url === endpoint).length;
       if (options.fetch) return options.fetch(url, init, usageCount);
+      if (new URL(url).pathname === pluginsPath) return response(plugins);
+      if (new URL(url).pathname === skillsPath) return response(skills);
       if (new URL(url).pathname === messagesPath) return response(messages);
       return response(String(url) === analyticsEndpoint ? analytics : usage);
     },
@@ -174,4 +180,4 @@ async function harness(options = {}) {
   };
 }
 
-export { root, secret, endpoint, analyticsEndpoint, messagesPath, messages, timestamp, usage, analytics, response, loadExtension, harness };
+export { root, secret, endpoint, analyticsEndpoint, messagesPath, messages, pluginsPath, skillsPath, plugins, skills, timestamp, usage, analytics, response, loadExtension, harness };
