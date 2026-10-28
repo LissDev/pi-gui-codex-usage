@@ -130,6 +130,88 @@ async function resetsRegion(page) {
   return region;
 }
 
+const countdownNow = Date.parse('2026-10-27T00:30:00+03:00');
+const quotaCard = (page, label) => page.locator('section.quota').filter({ has: page.getByRole('heading', { name: label, exact: true }) });
+
+test('countdown: minute presentation updates every finite quota beside exact dates, marks due safely, and never refreshes source data', async t => {
+  const next = resetsSnapshot();
+  next.overview.windows = [
+    { label: 'Primary future', usedPercent: 25, leftPercent: 75, resetAt: (countdownNow + 2 * 3600000) / 1000 },
+    { label: 'Review future', usedPercent: 10, leftPercent: 90, resetAt: (countdownNow + 4 * 3600000) / 1000 },
+    { label: 'Already due', usedPercent: 35, leftPercent: 65, resetAt: countdownNow / 1000 },
+    { label: 'No timestamp', usedPercent: 20, leftPercent: 80, resetAt: null },
+  ];
+  const page = await pageFor(t, next);
+  await page.clock.setFixedTime(new Date(countdownNow));
+  await page.evaluate(state => window.probe.publish(state), next);
+  const primary = quotaCard(page, 'Primary future');
+  assert.match(await primary.innerText(), /2026\.10\.27 02:30/);
+  assert.match(await primary.innerText(), /\b2\s*h(?:ours?)?\b/i, 'Future quotas show a human remaining duration');
+  assert.match(await quotaCard(page, 'Review future').innerText(), /\b4\s*h(?:ours?)?\b/i);
+  assert.match(await quotaCard(page, 'Already due').innerText(), /Reset due/i);
+  assert.doesNotMatch(await quotaCard(page, 'No timestamp').innerText(), /Reset|due|unknown|unavailable/i);
+  assert.deepEqual(await page.evaluate(() => [...window.probe.timerIntervals.values()].sort((a, b) => a - b)), [60000, 180000], 'Presentation and HTTP refresh own separate bounded intervals');
+  const before = await primary.innerText();
+  const source = await page.evaluate(() => window.probe.snapshot());
+  const calls = await page.evaluate(() => window.probe.calls);
+  await page.clock.setFixedTime(new Date(countdownNow + 60000));
+  await page.evaluate(() => window.probe.tickInterval(60000));
+  assert.notEqual(await primary.innerText(), before, 'Minute presentation changes visible remaining time');
+  assert.match(await primary.innerText(), /(?:1\s*h(?:ours?)?[\s,·]*59\s*m(?:inutes?)?|119\s*m(?:inutes?)?)/i);
+  assert.match(await primary.innerText(), /2026\.10\.27 02:30/, 'Absolute date remains unchanged');
+  await page.clock.setFixedTime(new Date(countdownNow + 2 * 3600000));
+  await page.evaluate(() => window.probe.tickInterval(60000));
+  assert.match(await primary.innerText(), /Reset due/i);
+  assert.match(await primary.innerText(), /Used 25%/);
+  assert.match(await primary.innerText(), /Left 75%/, 'Due time does not claim restored quota');
+  assert.match(await quotaCard(page, 'Review future').innerText(), /\b2\s*h(?:ours?)?\b/i);
+  assert.equal(await page.evaluate(() => window.probe.calls), calls, 'Minute ticks dispatch no source refresh');
+  assert.deepEqual(await page.evaluate(() => window.probe.snapshot()), source, 'Presentation never changes source timestamps, freshness, data or errors');
+});
+
+test('countdown: minute ticks preserve reset/history reading focus and use the current snapshot, then stop completely on close/abort', async t => {
+  const next = resetsSnapshot();
+  next.overview.windows = [{ label: 'Account A quota', usedPercent: 25, leftPercent: 75, resetAt: (countdownNow + 2 * 60000) / 1000 }];
+  const page = await pageFor(t, next);
+  await page.clock.setFixedTime(new Date(countdownNow));
+  assert.equal(await page.evaluate(() => [...window.probe.timerIntervals.values()].filter(ms => ms === 60000).length), 1, 'One minute presentation timer is mounted');
+  const resets = await resetsRegion(page);
+  await resets.getByRole('tab', { name: 'History', exact: true }).click();
+  const panel = resets.getByRole('tabpanel', { name: 'History', exact: true });
+  await panel.focus();
+  assert.equal(await panel.evaluate(node => node === document.activeElement), true);
+  await page.clock.setFixedTime(new Date(countdownNow + 60000));
+  await page.evaluate(() => window.probe.tickInterval(60000));
+  assert.equal(await panel.evaluate(node => node === document.activeElement), true, 'Minute text updates preserve the reading panel');
+  assert.equal(await resets.getByRole('tab', { name: 'History', exact: true }).getAttribute('aria-selected'), 'true');
+  const history = await historyRegion(page);
+  await history.getByRole('combobox', { name: 'Day details', exact: true }).selectOption({ label: '2026.10.26' });
+  const grouping = history.getByRole('combobox', { name: 'Group by', exact: true });
+  await grouping.selectOption({ label: 'By model' });
+  await grouping.focus();
+  await page.clock.setFixedTime(new Date(countdownNow + 2 * 60000));
+  await page.evaluate(() => window.probe.tickInterval(60000));
+  assert.equal(await grouping.evaluate(node => node === document.activeElement), true);
+  assert.equal(await grouping.locator('option:checked').innerText(), 'By model');
+  assert.match(await history.getByRole('region', { name: 'Day details', exact: true }).innerText(), /2026\.10\.26/);
+  next.overview.windows = [{ label: 'Account B quota', usedPercent: 40, leftPercent: 60, resetAt: (countdownNow + 60000) / 1000 }];
+  await page.evaluate(state => window.probe.publish(state), next);
+  await page.getByRole('tab', { name: 'Overview', exact: true }).click();
+  await page.evaluate(() => window.probe.tickInterval(60000));
+  assert.match(await quotaCard(page, 'Account B quota').innerText(), /Reset due/i, 'Countdown derives from current verified snapshot rather than captured account A windows');
+  assert.equal(await quotaCard(page, 'Account A quota').count(), 0);
+  assert.equal(await resets.getByRole('tab', { name: 'History', exact: true }).getAttribute('aria-selected'), 'true');
+  const calls = await page.evaluate(() => window.probe.calls);
+  await page.evaluate(async () => { window.probe.close(); await window.probe.tickInterval(60000); });
+  assert.equal(await page.evaluate(() => window.probe.timers.size), 0);
+  assert.equal(await page.locator('#root').innerText(), '');
+  assert.equal(await page.evaluate(() => window.probe.calls), calls);
+  await page.evaluate(async () => { await window.probe.mount(); window.probe.abort(); await window.probe.tickInterval(60000); });
+  assert.equal(await page.evaluate(() => window.probe.timers.size), 0);
+  assert.equal(await page.locator('#root').innerText(), '');
+  assert.equal(await page.evaluate(() => window.probe.calls), calls + 1, 'Remount performs its one existing refresh; aborted minute ticks perform none');
+});
+
 test('resets: Overview shows authoritative safe Available details and scoped returned History without mutation or pagination controls', async t => {
   const page = await pageFor(t, resetsSnapshot());
   const region = await resetsRegion(page);
@@ -881,8 +963,8 @@ test('Analytics tab shows all dated series as charts and keyboard accessible hea
 
 test('details mount polls finitely; dispose and abort stop timers and release the binding', async t => {
   const page = await pageFor(t);
-  const mounted = await page.evaluate(() => ({ timers: window.probe.timers.size, calls: window.probe.calls }));
-  assert.equal(mounted.timers, 1, 'Mounted details owns one frontend polling interval');
+  const mounted = await page.evaluate(() => ({ polling: [...window.probe.timerIntervals.values()].filter(ms => ms === 180000).length, calls: window.probe.calls }));
+  assert.equal(mounted.polling, 1, 'Mounted details owns exactly one frontend source-polling interval');
   assert.equal(mounted.calls, 1, 'Mount requests a finite refresh');
   await page.evaluate(() => window.probe.tick());
   assert.equal(await page.evaluate(() => window.probe.calls), 2);

@@ -14,6 +14,15 @@ function localDate(milliseconds) {
   const pad = number => String(number).padStart(2, '0');
   return `${time.getFullYear()}.${pad(time.getMonth() + 1)}.${pad(time.getDate())} ${pad(time.getHours())}:${pad(time.getMinutes())}`;
 }
+function resetCountdown(resetAt, now) {
+  const remaining = resetAt * 1000 - now;
+  if (remaining <= 0) return 'Reset due';
+  const minutes = Math.ceil(remaining / 60000);
+  const days = Math.floor(minutes / 1440);
+  const hours = Math.floor(minutes % 1440 / 60);
+  const parts = [days && `${days}d`, hours && `${hours}h`, minutes % 60 && `${minutes % 60}m`];
+  return `Resets in ${parts.filter(Boolean).join(' ')}`;
+}
 const calendarDate = date => date.replaceAll('-', '.');
 const dayKey = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 
@@ -450,7 +459,7 @@ function resetDetails(credits, history, selected, select) {
   return region;
 }
 
-function quota(window) {
+function quota(window, index) {
   const card = element('section', null, 'quota');
   card.append(element('h3', window.label));
   const used = window.usedPercent;
@@ -471,7 +480,13 @@ function quota(window) {
     track.append(fill);
     card.append(track);
   }
-  if (window.resetAt != null) card.append(element('p', `Reset: ${localDate(window.resetAt * 1000)}`, 'reset'));
+  if (Number.isFinite(window.resetAt)) {
+    const reset = element('p', null, 'reset');
+    const countdown = element('span', resetCountdown(window.resetAt, Date.now()), 'reset-countdown');
+    countdown.dataset.window = String(index);
+    reset.append(`Reset: ${localDate(window.resetAt * 1000)} · `, countdown);
+    card.append(reset);
+  }
   return card;
 }
 
@@ -646,6 +661,7 @@ export async function mount(root, host) {
   let verified = false;
   let disposed = false;
   let timer;
+  let countdownTimer;
   let unsubscribe;
   let refreshing = false;
   let requestEpoch = 0;
@@ -683,7 +699,7 @@ export async function mount(root, host) {
       if (section.windows.length) {
         panel.append(element('h2', 'Subscription limits'));
         const quotas = element('div', null, 'quotas');
-        for (const window of section.windows) quotas.append(quota(window));
+        for (const [index, window] of section.windows.entries()) quotas.append(quota(window, index));
         panel.append(quotas);
       }
       if (section.metrics.length) panel.append(element('h2', 'Account and quota details'), metricList(section.metrics));
@@ -770,6 +786,7 @@ export async function mount(root, host) {
     if (disposed) return;
     disposed = true;
     clearInterval(timer);
+    clearInterval(countdownTimer);
     unsubscribe?.();
     host.signal.removeEventListener('abort', dispose);
     for (const tab of tabs) { tab.onclick = null; tab.onkeydown = null; }
@@ -825,12 +842,23 @@ export async function mount(root, host) {
       }
     } finally { refreshing = false; }
   }
+  function updateCountdowns() {
+    if (disposed || !verified || !snapshot) return;
+    const now = Date.now();
+    for (const node of panel.querySelectorAll('.reset-countdown')) {
+      const window = snapshot.overview.windows[Number(node.dataset.window)];
+      node.textContent = Number.isFinite(window?.resetAt) ? resetCountdown(window.resetAt, now) : '';
+    }
+  }
   try {
     await binding.ready(context);
     if (disposed) return dispose;
     unsubscribe = service.state.subscribe(next => { if (!disposed && verified) { snapshot = next; render(); } });
     await refresh();
-    if (!disposed) timer = setInterval(refresh, 180000);
+    if (!disposed) {
+      timer = setInterval(refresh, 180000);
+      countdownTimer = setInterval(updateCountdowns, 60000);
+    }
   } catch {
     dispose();
     if (!host.signal.aborted) root.append(element('p', 'Codex Usage service unavailable'));

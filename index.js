@@ -19,6 +19,15 @@ function localDate(milliseconds) {
   const pad = number => String(number).padStart(2, '0');
   return `${time.getFullYear()}.${pad(time.getMonth() + 1)}.${pad(time.getDate())} ${pad(time.getHours())}:${pad(time.getMinutes())}`;
 }
+function resetCountdown(resetAt, now) {
+  const remaining = resetAt * 1000 - now;
+  if (remaining <= 0) return 'Reset due';
+  const minutes = Math.ceil(remaining / 60000);
+  const days = Math.floor(minutes / 1440);
+  const hours = Math.floor(minutes % 1440 / 60);
+  const parts = [days && `${days}d`, hours && `${hours}h`, minutes % 60 && `${minutes % 60}m`];
+  return `Resets in ${parts.filter(Boolean).join(' ')}`;
+}
 function addMetric(metrics, name, item, format) {
   if (item == null) return;
   const cleaned = typeof item === 'string' ? value(item).trim() : (value(item), item);
@@ -371,6 +380,7 @@ export default function codexUsage(pi, services = {}) {
     const report = snapshot(authMessage);
     reportState?.replace(BACKGROUND_CONTEXT, report);
     if (!visible) return;
+    const displayTime = now();
     const limits = report.overview;
     const lines = [];
     if (limits.error) lines.push(limits.error);
@@ -381,7 +391,7 @@ export default function codexUsage(pi, services = {}) {
       const fragments = [`Limit: ${window.label}`];
       if (used != null) fragments.push(`Used ${bar} ${used}%`);
       if (window.leftPercent != null) fragments.push(`Left ${window.leftPercent}%`);
-      if (window.resetAt != null) fragments.push(`Reset ${date(window.resetAt)}`);
+      if (window.resetAt != null) fragments.push(`Reset ${date(window.resetAt)}`, resetCountdown(window.resetAt, displayTime));
       lines.push(fragments.join(' · '));
     }
     if (limits.updatedAt != null) lines.push(`${limits.stale ? 'Stale · last successful update' : 'Updated'}: ${localDate(limits.updatedAt)}`);

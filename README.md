@@ -36,12 +36,20 @@ MIT notices in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 The command is `/codex-usage`; the older `/usage` name is no longer registered.
 
 Compact contains only quota-window durations, a **used** fill bar and percentage,
-remaining percentage, local reset dates, and the last successful update. Failed
+remaining percentage, local reset dates with a relative countdown, and the last successful update. Failed
 updates mark retained data **Stale**. Its collapsed summary is
 `Codex usage · X% left`, using the first included window. The host's dock
 collapse/expand and X controls remain native. X temporarily dismisses the
 current compact widget; changed output may show it again. Use the Hide command
 for durable hiding.
+
+Each supplied quota reset date also shows **Resets in** days, hours and minutes,
+or **Reset due** at/past that instant. Due does not claim that quota has been
+restored: the source's usage and remaining percentages stay unchanged. Missing
+reset dates have no countdown placeholder; exact local dates remain visible.
+Compact recalculates relative text only during its existing show/data-refresh
+renders. It has no extra minute timer, so time passing alone does not rewrite a
+host-dismissed dock.
 
 The right report has two keyboard-accessible tabs: **Overview** for graphical
 quota meters, supplied account details and Usage limit resets, and **Analytics** for Usage history,
@@ -56,6 +64,13 @@ resumes frontend polling. A failed initial refresh shows unavailable feedback
 without prior-account metrics. Same-session branch navigation preserves the
 account report independently of compact's branch visibility; a new session
 clears the report before refreshing.
+
+In Overview, quota countdown text updates every minute using the current report
+and wall clock. This presentation timer changes only the relative text nodes;
+it does not fetch data, change Updated/source freshness, rerender the report or
+move keyboard focus. The three-minute HTTP cadence is unchanged. Closing or
+aborting the report stops both timers. Countdown text is limited to quota reset
+dates; credit status and expiry semantics remain as supplied.
 
 ### Usage limit resets
 

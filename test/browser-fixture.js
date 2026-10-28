@@ -1,5 +1,5 @@
 const config = window.fixtureConfig;
-const probe = window.probe = { calls: 0, historyCalls: [], messagesCalls: [], pluginsCalls: [], skillsCalls: [], refreshInputs: [], timers: new Map(), disposed: 0, unsubscribed: 0, error: null };
+const probe = window.probe = { calls: 0, historyCalls: [], messagesCalls: [], pluginsCalls: [], skillsCalls: [], refreshInputs: [], timers: new Map(), timerIntervals: new Map(), disposed: 0, unsubscribed: 0, error: null };
 const theme = { mode: 'dark', background: '#1d1d1c', foreground: '#d3d3cf', accent: '#7aa2f7' };
 probe.changeTheme = next => {
   Object.assign(theme, next);
@@ -8,8 +8,8 @@ probe.changeTheme = next => {
 };
 probe.changeTheme(theme);
 let nextTimer = 0;
-window.setInterval = callback => { probe.timers.set(++nextTimer, callback); return nextTimer; };
-window.clearInterval = id => probe.timers.delete(id);
+window.setInterval = (callback, ms) => { probe.timers.set(++nextTimer, callback); probe.timerIntervals.set(nextTimer, ms); return nextTimer; };
+window.clearInterval = id => { probe.timerIntervals.delete(id); probe.timers.delete(id); };
 const listeners = new Set();
 const state = {
   value: config.snapshot,
@@ -61,6 +61,8 @@ let controller;
 let dispose;
 probe.publish = snapshot => { state.value = snapshot; for (const listener of listeners) listener(snapshot); };
 probe.tick = async () => { await Promise.all([...probe.timers.values()].map(callback => callback())); };
+probe.tickInterval = async ms => { await Promise.all([...probe.timers].filter(([id]) => probe.timerIntervals.get(id) === ms).map(([, callback]) => callback())); };
+probe.snapshot = () => structuredClone(state.value);
 probe.close = () => dispose?.();
 probe.abort = () => controller?.abort();
 probe.deferNextRefresh = () => { config.deferredRefresh = true; };
