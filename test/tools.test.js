@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { harness, response, usage, analytics, endpoint, analyticsEndpoint, messagesPath, messages, pluginsPath, skillsPath, plugins, skills, secret, timestamp } from './helpers.js';
+import { harness, response, usage, analytics, endpoint, analyticsEndpoint, messagesPath, messages, pluginsPath, skillsPath, plugins, skills, resetCreditsPath, resetHistoryPath, resetCredits, resetHistory, secret, timestamp } from './helpers.js';
 
 const historyPath = '/backend-api/wham/usage/daily-token-usage-breakdown';
 const range30 = { startDate: '2026-09-28', endDate: '2026-10-27' };
@@ -21,7 +21,9 @@ const turn = () => new Promise(resolve => setImmediate(resolve));
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
 const backend = options => harness({ ...options, fetch: (url, init) => {
   const path = new URL(url).pathname;
-  assert.ok([new URL(endpoint).pathname, new URL(analyticsEndpoint).pathname, historyPath, messagesPath, pluginsPath, skillsPath].includes(path), 'Only six approved sources');
+  assert.ok([new URL(endpoint).pathname, new URL(analyticsEndpoint).pathname, historyPath, messagesPath, pluginsPath, skillsPath, resetCreditsPath, resetHistoryPath].includes(path), 'Only eight approved sources');
+  if (path === resetCreditsPath) return response(resetCredits);
+  if (path === resetHistoryPath) return response(resetHistory);
   if (options?.fetchSource) return options.fetchSource(url, init);
   if (String(url) === endpoint) return response(usage);
   if (String(url) === analyticsEndpoint) return response(analytics);
@@ -40,7 +42,7 @@ const refreshCard = (h, definition) => {
 test('tools: public defaults fetch thirty inclusive local days from both top-ten sources while compact stays two-source', async () => {
   const h = await backend({ now: new Date(2027, 0, 1, 0, 15).getTime() });
   await open(h);
-  assert.equal(h.requests.length, 6, 'Full report reads exactly six approved sources');
+  assert.equal(h.requests.length, 8, 'Full report reads exactly eight approved sources');
   for (const definition of definitions) {
     const matching = h.requests.filter(request => new URL(request.url).pathname === definition.path);
     assert.equal(matching.length, 1);
@@ -213,7 +215,7 @@ test('tools: public account changes hydrate all six even after compact discovers
     const before = h.requests.length;
     try {
       assert.equal((await refreshCard(h, definitions[0])(range30)).verified, true);
-      assert.equal(h.requests.length, before + 6, 'First public B refresh hydrates every source');
+      assert.equal(h.requests.length, before + 8, 'First public B refresh hydrates every source');
       for (const definition of definitions) assert.equal(report(h, definition.key).data[0]?.[definition.rows][0]?.invocation_counts, 22);
       assert.equal(h.snapshot().overview.windows[0]?.usedPercent, 22);
       assert.equal(h.snapshot().history.data[0]?.attribution[0]?.value, 22);

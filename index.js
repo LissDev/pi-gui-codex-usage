@@ -219,6 +219,47 @@ function toolsReport(body, range, kind) {
   return { data, dataAsOf };
 }
 
+function resetTimestamp(timestamp) {
+  if (timestamp == null) return null;
+  const parts = typeof timestamp === 'string' && /^(\d{4}-\d{2}-\d{2})T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/.exec(timestamp);
+  if (!parts || !validDate(parts[1])) throw new Error('Invalid reset timestamp');
+  const parsed = Date.parse(timestamp);
+  if (!Number.isFinite(parsed)) throw new Error('Invalid reset timestamp');
+  return parsed;
+}
+
+function resetCreditsReport(body) {
+  if (!object(body) || !Array.isArray(body.credits)) throw new Error('Invalid reset credits');
+  const credits = body.credits.map(credit => {
+    if (!object(credit)) throw new Error('Invalid reset credit');
+    const cleaned = {};
+    for (const field of ['reset_type', 'status', 'title', 'description']) {
+      if (credit[field] == null) continue;
+      if (typeof credit[field] !== 'string') throw new Error('Invalid reset credit text');
+      cleaned[field] = value(credit[field]);
+    }
+    if (credit.is_supported_by_plan != null && typeof credit.is_supported_by_plan !== 'boolean') throw new Error('Invalid plan support');
+    cleaned.is_supported_by_plan = credit.is_supported_by_plan ?? null;
+    for (const field of ['granted_at', 'expires_at']) cleaned[field] = resetTimestamp(credit[field]);
+    return cleaned;
+  });
+  const report = { credits, dataAsOf: null };
+  for (const field of ['available_count', 'total_earned_count']) {
+    if (body[field] != null && (!Number.isInteger(body[field]) || body[field] < 0)) throw new Error('Invalid reset count');
+    report[field] = body[field] ?? null;
+  }
+  return report;
+}
+
+function resetHistoryReport(body) {
+  if (!object(body) || !Array.isArray(body.events)) throw new Error('Invalid reset history');
+  const events = body.events.map(event => {
+    if (!object(event) || typeof event.kind !== 'string') throw new Error('Invalid reset event');
+    return { kind: value(event.kind), occurred_at: resetTimestamp(event.occurred_at) };
+  });
+  return { events, window_start: resetTimestamp(body.window_start), dataAsOf: resetTimestamp(body.as_of) };
+}
+
 function bounded(promise, signal) {
   return new Promise((resolve, reject) => {
     const aborted = () => reject(new Error('Cancelled'));
@@ -256,6 +297,8 @@ export default function codexUsage(pi, services = {}) {
     const analytics = sections.Analytics;
     const history = cards.History;
     const messages = cards.Messages;
+    const resetCredits = sections['Reset credits'];
+    const resetHistory = sections['Reset history'];
     const left = limits?.windows[0]?.leftPercent;
     return {
       summary: left == null ? 'Codex usage · unavailable' : `Codex usage · ${left}% left`,
@@ -265,6 +308,8 @@ export default function codexUsage(pi, services = {}) {
       messages: { ...messages.range, data: messages.section?.data ?? [], dataAsOf: messages.section?.dataAsOf ?? null, updatedAt: messages.section?.at ?? null, stale: messages.section?.stale ?? false, error: authMessage ?? messages.section?.error ?? (messages.section ? null : 'Messages unavailable') },
       plugins: toolsSnapshot('Plugins', authMessage),
       skills: toolsSnapshot('Skills', authMessage),
+      resetCredits: { credits: resetCredits?.credits ?? [], available_count: resetCredits?.available_count ?? null, total_earned_count: resetCredits?.total_earned_count ?? null, dataAsOf: null, updatedAt: resetCredits?.at ?? null, stale: resetCredits?.stale ?? false, error: authMessage ?? resetCredits?.error ?? (resetCredits ? null : 'Reset credits unavailable') },
+      resetHistory: { events: resetHistory?.events ?? [], window_start: resetHistory?.window_start ?? null, dataAsOf: resetHistory?.dataAsOf ?? null, updatedAt: resetHistory?.at ?? null, stale: resetHistory?.stale ?? false, error: authMessage ?? resetHistory?.error ?? (resetHistory ? null : 'Reset history unavailable') },
     };
   }
 
@@ -480,6 +525,7 @@ export default function codexUsage(pi, services = {}) {
       if (!options.card || hydrateDetails || options.card === 'Messages') sources.push(['analytics/daily-workspace-usage-counts', 'Messages', messagesReport]);
       if (!options.card || hydrateDetails || options.card === 'Plugins') sources.push(['analytics/daily-plugin-usage-metrics', 'Plugins', (body, range) => toolsReport(body, range, 'plugin')]);
       if (!options.card || hydrateDetails || options.card === 'Skills') sources.push(['analytics/daily-skill-usage-metrics', 'Skills', (body, range) => toolsReport(body, range, 'skill')]);
+      if (!options.card || hydrateDetails) sources.push(['rate-limit-reset-credits', 'Reset credits', resetCreditsReport], ['rate-limit-reset-credits/history', 'Reset history', resetHistoryReport]);
       detailsInitialized = true;
     }
     await Promise.all(sources.map(([path, title, format]) => readSource(auth, path, title, format, deadline)));

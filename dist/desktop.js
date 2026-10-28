@@ -383,6 +383,73 @@ function metricList(metrics) {
   return list;
 }
 
+function resetDetails(credits, history, selected, select) {
+  const region = element('section', null, 'reset-details');
+  region.setAttribute('role', 'region');
+  region.setAttribute('aria-label', 'Usage limit resets');
+  region.append(element('h2', 'Usage limit resets'));
+  const nav = element('nav', null, 'reset-tabs');
+  nav.setAttribute('role', 'tablist');
+  nav.setAttribute('aria-label', 'Usage limit resets');
+  for (const [index, name] of ['Available', 'History'].entries()) {
+    const tab = element('button', name);
+    tab.type = 'button';
+    tab.id = `reset-tab-${index}`;
+    tab.setAttribute('role', 'tab');
+    tab.setAttribute('aria-selected', String(selected === index));
+    tab.setAttribute('aria-controls', 'reset-details-panel');
+    tab.tabIndex = selected === index ? 0 : -1;
+    tab.onclick = () => select(index);
+    tab.onkeydown = event => {
+      const target = event.key === 'Home' ? 0 : event.key === 'End' ? 1 : event.key === 'ArrowRight' || event.key === 'ArrowLeft' ? 1 - selected : undefined;
+      if (target == null) return;
+      event.preventDefault();
+      select(target);
+    };
+    nav.append(tab);
+  }
+  const panel = element('section');
+  panel.id = 'reset-details-panel';
+  panel.setAttribute('role', 'tabpanel');
+  panel.setAttribute('aria-labelledby', `reset-tab-${selected}`);
+  panel.tabIndex = 0;
+  const source = selected === 0 ? credits : history;
+  panel.append(freshness(source), element('p', `Data as of: ${source.dataAsOf == null ? 'unknown' : localDate(source.dataAsOf)}`, 'freshness'));
+  if (source.error) panel.append(element('p', source.error, 'error'));
+  if (selected === 0) {
+    panel.append(metricList([
+      { label: 'Available', value: credits.available_count },
+      { label: 'Total earned', value: credits.total_earned_count },
+    ].filter(metric => metric.value != null)));
+    if (!credits.credits.length) panel.append(element('p', 'No reset credits returned'));
+    for (const credit of credits.credits) {
+      const entry = element('section', null, 'quota reset-credit');
+      entry.append(element('h3', credit.title || 'Reset credit'));
+      if (credit.description) entry.append(element('p', credit.description));
+      entry.append(metricList([
+        { label: 'Reset type', value: credit.reset_type?.replaceAll('_', ' ') },
+        { label: 'Status', value: credit.status?.replaceAll('_', ' ') },
+        { label: 'Supported by plan', value: credit.is_supported_by_plan },
+        { label: 'Granted', value: credit.granted_at, format: 'datetime' },
+        { label: 'Expires', value: credit.expires_at, format: 'datetime' },
+      ].filter(metric => metric.value != null && metric.value !== '')));
+      panel.append(entry);
+    }
+  } else {
+    panel.append(element('p', 'Returned history', 'freshness'));
+    if (history.window_start != null) panel.append(element('p', `Returned window start: ${localDate(history.window_start)}`, 'freshness'));
+    if (!history.events.length) panel.append(element('p', 'No returned history events'));
+    for (const event of history.events) {
+      const entry = element('section', null, 'quota reset-credit');
+      entry.append(element('h3', event.kind.replaceAll('_', ' ')));
+      if (event.occurred_at != null) entry.append(element('p', `Occurred: ${localDate(event.occurred_at)}`));
+      panel.append(entry);
+    }
+  }
+  region.append(nav, panel);
+  return region;
+}
+
 function quota(window) {
   const card = element('section', null, 'quota');
   card.append(element('h3', window.label));
@@ -590,9 +657,11 @@ export async function mount(root, host) {
   const pluginsView = { days: 30, range: { startDate: latestTools.start, endDate: latestTools.end }, day: undefined, loading: false, epoch: 0 };
   const skillsView = { days: 30, range: { startDate: latestTools.start, endDate: latestTools.end }, day: undefined, loading: false, epoch: 0 };
   const cardViews = [historyView, messagesView, pluginsView, skillsView];
+  let resetSelected = 0;
 
   function render(resetScroll = false) {
     const focusedUsage = panel.querySelector('.usage-controls :focus')?.dataset.control;
+    const focusedReset = panel.querySelector('.reset-tabs button:focus, #reset-details-panel:focus')?.id;
     if (resetScroll) scrollPositions.clear();
     else {
       for (const scroll of panel.querySelectorAll('.heatmap-scroll')) scrollPositions.set(scroll.dataset.history, scroll.scrollLeft);
@@ -618,6 +687,13 @@ export async function mount(root, host) {
         panel.append(quotas);
       }
       if (section.metrics.length) panel.append(element('h2', 'Account and quota details'), metricList(section.metrics));
+      if (snapshot.resetCredits && snapshot.resetHistory) {
+        panel.append(resetDetails(snapshot.resetCredits, snapshot.resetHistory, resetSelected, index => {
+          resetSelected = index;
+          render();
+          panel.querySelector(`#reset-tab-${index}`)?.focus({ preventScroll: true });
+        }));
+      }
     } else {
       if (snapshot.history) {
         if (!historyView.loading && snapshot.history.startDate === historyView.range.startDate && snapshot.history.endDate === historyView.range.endDate && !snapshot.history.data.some(day => day.date === historyView.day && day.attribution.some(row => row.value != null))) historyView.day = undefined;
@@ -668,6 +744,7 @@ export async function mount(root, host) {
       }
       if (focusedUsage) panel.querySelector(`[data-control="${focusedUsage}"]`)?.focus({ preventScroll: true });
     }
+    if (focusedReset) panel.querySelector(`#${focusedReset}`)?.focus({ preventScroll: true });
   }
 
   tabs.forEach((tab, index) => {

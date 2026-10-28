@@ -44,7 +44,7 @@ current compact widget; changed output may show it again. Use the Hide command
 for durable hiding.
 
 The right report has two keyboard-accessible tabs: **Overview** for graphical
-quota meters and supplied account details, and **Analytics** for Usage history,
+quota meters, supplied account details and Usage limit resets, and **Analytics** for Usage history,
 Messages, Plugins, Skills, all-time metrics,
 invocation details and daily, cumulative and weekly charts with calendar heatmaps. Close it
 with the native workbench control; Hide affects compact only. A mounted report
@@ -56,6 +56,32 @@ resumes frontend polling. A failed initial refresh shows unavailable feedback
 without prior-account metrics. Same-session branch navigation preserves the
 account report independently of compact's branch visibility; a new session
 clears the report before refreshing.
+
+### Usage limit resets
+
+Overview includes a read-only **Usage limit resets** card. Its local **Available**
+and **History** tabs inspect the same reset resource without making another
+request. Selection survives live updates, source errors and outer-tab changes;
+reopening defaults to Available. Both sources refresh with the full report.
+
+Available shows the server's **Available** and **Total earned** counts independently
+of the number of returned credit entries. These counts remain separate from the
+usage endpoint's existing Earned resets and Applicable earned resets. Supplied
+credit details include title, description, reset type/status, plan support and
+granted/expiry dates. Explicit false plan support stays false; unknown support is
+omitted. Empty lists and explicit zero counts remain distinct from unknown values.
+
+History displays only the **returned history** and its supplied window start,
+with safe event kinds and occurrence dates. It does not claim exhaustive lifetime
+history or offer pagination. Each reset source retains its own same-account
+last-known values, successful-fetch time, stale status and sanitized errors.
+History's **Data as of** uses its source timestamp; Available's source freshness
+is unknown. Both keep that separate from the local **Updated** time.
+
+The card has no purchase, redeem, reset, toggle or load-more action. Credit/event
+IDs, profile/avatar fields, purchase/configuration flags and unproved redemption
+timestamps are excluded. Status remains as supplied; expiry dates do not trigger
+an inferred status change.
 
 ### Usage history
 
@@ -107,7 +133,7 @@ does not fabricate a zero for a missing day.
 Messages has its own local successful-fetch time, stale/error feedback and
 account/range cache. **Data as of** remains unknown when the source supplies no
 freshness timestamp. The card contains counts only, without token, credit or
-user-count fields. Account changes clear all six report sources and the next
+user-count fields. Account changes clear all eight report sources and the next
 public refresh reloads them, including when compact discovered the new account.
 
 ### Plugins and Skills
@@ -183,7 +209,7 @@ quota percentage is `100 − used percentage`. Other metrics come directly from
 the server: the extension does not estimate subscription token costs or invent
 token totals, reset credits or analytics endpoints.
 
-All six sources keep separate last-success timestamps in memory. A failed,
+All eight sources keep separate last-success timestamps in memory. A failed,
 timed-out or malformed source update leaves its previous report marked **stale**,
 while a successful source can still update. Stale data is retained only after Pi
 successfully resolves the same current account using its `ChatGPT-Account-Id`
@@ -214,6 +240,8 @@ https://chatgpt.com/backend-api/wham/usage/daily-token-usage-breakdown
 https://chatgpt.com/backend-api/wham/analytics/daily-workspace-usage-counts
 https://chatgpt.com/backend-api/wham/analytics/daily-plugin-usage-metrics
 https://chatgpt.com/backend-api/wham/analytics/daily-skill-usage-metrics
+https://chatgpt.com/backend-api/wham/rate-limit-reset-credits
+https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/history
 ```
 
 History sends the selected `start_date`, `end_date`, `group_by=day` query and the
@@ -230,6 +258,10 @@ Plugins and Skills send their selected dates, `group_by=day`,
 `workspace_user=true` and respectively `top_plugin_limit=10` or
 `top_skill_limit=10`. Only source dates, safe names/marketplace labels, invocation
 counts and the supplied freshness timestamp enter these cards.
+
+The two reset-detail sources use no query parameters. Full report refreshes read
+all eight sources; compact refreshes continue to read only limits and the token
+profile. Switching the reset card's local tabs changes presentation only.
 
 It checks Pi's provider and effective auth origins before sending credentials,
 and rejects redirects. These are private ChatGPT endpoints and may change or

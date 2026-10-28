@@ -4,7 +4,7 @@ import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { chromium } from '@playwright/test';
-import { harness, root, timestamp, plugins, skills } from './helpers.js';
+import { harness, root, timestamp, plugins, skills, resetCredits, resetHistory } from './helpers.js';
 
 const snapshot = {
   summary: 'Codex usage · 75% left',
@@ -116,6 +116,122 @@ async function toolsRegions(page) {
   assert.equal(await skills.count(), 1, 'Analytics exposes a separate labelled Skills card');
   return { plugins, skills };
 }
+
+const resetsSnapshot = () => ({ ...toolsSnapshot(), resetCredits: {
+  credits: resetCredits.credits.map(credit => ({ ...credit, granted_at: Date.parse(credit.granted_at), expires_at: Date.parse(credit.expires_at) })),
+  available_count: 5, total_earned_count: 9, dataAsOf: null, updatedAt: timestamp, stale: false, error: null,
+}, resetHistory: {
+  events: resetHistory.events.map(event => ({ ...event, occurred_at: Date.parse(event.occurred_at) })),
+  window_start: Date.parse(resetHistory.window_start), dataAsOf: Date.parse(resetHistory.as_of), updatedAt: timestamp, stale: false, error: null,
+} });
+async function resetsRegion(page) {
+  const region = page.getByRole('region', { name: 'Usage limit resets', exact: true });
+  assert.equal(await region.count(), 1, 'Overview exposes its inline Usage limit resets card');
+  return region;
+}
+
+test('resets: Overview shows authoritative safe Available details and scoped returned History without mutation or pagination controls', async t => {
+  const page = await pageFor(t, resetsSnapshot());
+  const region = await resetsRegion(page);
+  assert.equal(await page.getByRole('tablist', { name: 'Usage report', exact: true }).getByRole('tab').count(), 2);
+  assert.equal(await region.getByRole('tab', { name: 'Available', exact: true }).getAttribute('aria-selected'), 'true');
+  assert.match(await region.innerText(), /available(?:\s+count)?\s*:?\s*5\b/i);
+  assert.match(await region.innerText(), /total earned(?:\s+count)?\s*:?\s*9\b/i);
+  assert.match(await region.innerText(), /Earned reset/);
+  assert.match(await region.innerText(), /A reset from supplied activity/);
+  assert.match(await region.innerText(), /weekly/i);
+  assert.match(await region.innerText(), /2026\.10\.07 23:40/);
+  assert.match(await region.innerText(), /2026\.11\.06 23:40/);
+  assert.equal(await region.getByRole('img', { name: 'False', exact: true }).count(), 1, 'Explicit unsupported-by-plan remains accessible false');
+  assert.match(await region.innerText(), /data as of[^\n]*unknown/i);
+  assert.match(await page.getByRole('tabpanel', { name: 'Overview', exact: true }).innerText(), /Earned resets\s*2/);
+  await region.getByRole('tab', { name: 'History', exact: true }).click();
+  assert.match(await region.innerText(), /granted/i);
+  assert.match(await region.innerText(), /2026\.10\.07 23:40/);
+  assert.match(await region.innerText(), /2026\.09\.28 00:44/, 'Source window start uses host-local human dates');
+  assert.match(await region.innerText(), /data as of[^\n]*2026\.10\.27 19:00/i);
+  assert.match(await region.innerText(), /updated[^\n]*2026\.10\.27 20:00/i, 'Local fetch time differs from source freshness');
+  assert.match(await region.innerText(), /returned[^\n]*(?:history|window)|(?:history|window)[^\n]*returned/i);
+  assert.doesNotMatch(await region.innerText(), /complete history|all-time history|lifetime history/i);
+  assert.equal(await region.getByRole('button', { name: /purchase|buy|redeem|reset now|load more|next page/i }).count(), 0);
+  assert.equal(await region.getByRole('switch').count(), 0);
+  assert.equal(await region.getByRole('checkbox').count(), 0);
+  assert.equal(await region.locator('img').count(), 0, 'No profile/avatar image is displayed');
+});
+
+test('resets: keyboard local tabs retain selection across outer tabs/live refresh and reset to Available on remount', async t => {
+  const next = resetsSnapshot();
+  const page = await pageFor(t, next);
+  let region = await resetsRegion(page);
+  const before = await page.evaluate(() => window.probe.calls);
+  await region.getByRole('tab', { name: 'Available', exact: true }).focus();
+  await page.keyboard.press('ArrowRight');
+  assert.equal(await region.getByRole('tab', { name: 'History', exact: true }).getAttribute('aria-selected'), 'true');
+  assert.equal(await region.getByRole('tab', { name: 'History', exact: true }).evaluate(node => node === document.activeElement), true);
+  next.resetHistory.events = [{ kind: 'supplied_history_event', occurred_at: Date.parse('2026-10-26T17:00:00Z') }];
+  await page.evaluate(state => window.probe.publish(state), next);
+  assert.equal(await region.getByRole('tab', { name: 'History', exact: true }).getAttribute('aria-selected'), 'true');
+  assert.match(await region.innerText(), /supplied.history.event/i);
+  await page.getByRole('tab', { name: 'Analytics', exact: true }).click();
+  await page.getByRole('tab', { name: 'Overview', exact: true }).click();
+  region = await resetsRegion(page);
+  assert.equal(await region.getByRole('tab', { name: 'History', exact: true }).getAttribute('aria-selected'), 'true');
+  assert.equal(await page.evaluate(() => window.probe.calls), before, 'Local reset-tab changes never dispatch refresh');
+  await page.evaluate(async () => { window.probe.close(); await window.probe.mount(); });
+  region = await resetsRegion(page);
+  assert.equal(await region.getByRole('tab', { name: 'Available', exact: true }).getAttribute('aria-selected'), 'true');
+});
+
+test('resets: focused Available and History panels retain reading focus across live content updates', async t => {
+  const next = resetsSnapshot();
+  const page = await pageFor(t, next);
+  const region = await resetsRegion(page);
+  for (const name of ['Available', 'History']) {
+    await region.getByRole('tab', { name, exact: true }).click();
+    const panel = region.getByRole('tabpanel', { name, exact: true });
+    assert.equal(await panel.count(), 1, 'The selected reset view exposes its labelled tabpanel');
+    await panel.focus();
+    assert.equal(await panel.evaluate(node => node === document.activeElement), true, 'Regression starts with actual keyboard reading focus in the panel');
+    if (name === 'Available') next.resetCredits.credits[0].title = 'Updated supplied reset title';
+    else next.resetHistory.events[0].kind = 'updated_supplied_event';
+    await page.evaluate(state => window.probe.publish(state), next);
+    const replacement = region.getByRole('tabpanel', { name, exact: true });
+    assert.equal(await replacement.evaluate(node => node === document.activeElement), true, 'Live update retains focus in the replacement reading panel');
+    assert.equal(await region.getByRole('tab', { name, exact: true }).getAttribute('aria-selected'), 'true');
+    assert.equal(await page.getByRole('tab', { name: 'Overview', exact: true }).getAttribute('aria-selected'), 'true');
+    assert.match(await replacement.innerText(), name === 'Available' ? /Updated supplied reset title/ : /updated.supplied.event/i);
+  }
+});
+
+test('resets: zero and false remain distinct from unknown while empty/stale/error feedback is independent per local tab', async t => {
+  const next = resetsSnapshot();
+  const page = await pageFor(t, next);
+  const region = await resetsRegion(page);
+  next.resetCredits = { ...next.resetCredits, credits: [], available_count: 0, total_earned_count: 0 };
+  await page.evaluate(state => window.probe.publish(state), next);
+  assert.match(await region.innerText(), /available(?:\s+count)?\s*:?\s*0\b/i);
+  assert.match(await region.innerText(), /no[^\n]*(?:resets|credits)|empty/i);
+  next.resetCredits = { ...next.resetCredits, credits: [{ ...resetsSnapshot().resetCredits.credits[0], is_supported_by_plan: null }], available_count: null, total_earned_count: null };
+  await page.evaluate(state => window.probe.publish(state), next);
+  assert.doesNotMatch(await region.innerText(), /available(?:\s+count)?\s*:?\s*0\b/i, 'Unknown is not zero');
+  assert.equal(await region.getByRole('img', { name: 'False', exact: true }).count(), 0, 'Unknown is not unsupported');
+  next.resetCredits = { ...resetsSnapshot().resetCredits, stale: true, error: 'Reset credits unavailable' };
+  await page.evaluate(state => window.probe.publish(state), next);
+  assert.match(await region.innerText(), /stale/i);
+  assert.match(await region.innerText(), /unavailable/i);
+  assert.match(await region.innerText(), /Earned reset/);
+  await region.getByRole('tab', { name: 'History', exact: true }).click();
+  assert.doesNotMatch(await region.innerText(), /stale|unavailable/i, 'Available source failure does not contaminate fresh History');
+  next.resetHistory = { ...next.resetHistory, events: [], stale: true, error: 'Reset history unavailable' };
+  await page.evaluate(state => window.probe.publish(state), next);
+  assert.match(await region.innerText(), /stale/i);
+  assert.match(await region.innerText(), /unavailable/i);
+  next.resetHistory = { ...next.resetHistory, stale: false, error: null };
+  await page.evaluate(state => window.probe.publish(state), next);
+  assert.match(await region.innerText(), /no[^\n]*(?:events|history)|empty/i);
+  assert.equal(await region.getByRole('tab', { name: 'History', exact: true }).getAttribute('aria-selected'), 'true');
+  assert.equal(await page.getByRole('heading', { name: 'Subscription limits', exact: true }).count(), 1);
+});
 
 test('tools: inline named charts report top-ten subtotals, keep namespaces distinct, and render display names as safe text', async t => {
   const next = toolsSnapshot();

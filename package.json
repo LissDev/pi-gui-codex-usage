@@ -1,6 +1,6 @@
 {
   "name": "pi-gui-codex-usage",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "type": "module",
   "displayName": "Codex Usage",
   "description": "Compact Codex quotas and a graphical usage report in vanilla pi-gui.",

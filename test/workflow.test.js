@@ -139,6 +139,8 @@ test('details refresh cancelled by compact hide reports that identity was not ve
     '/backend-api/wham/analytics/daily-skill-usage-metrics',
     '/backend-api/wham/analytics/daily-workspace-usage-counts',
     '/backend-api/wham/profiles/me',
+    '/backend-api/wham/rate-limit-reset-credits',
+    '/backend-api/wham/rate-limit-reset-credits/history',
     '/backend-api/wham/usage',
     '/backend-api/wham/usage/daily-token-usage-breakdown',
   ], 'Initial public details refresh reads each approved source exactly once');
