@@ -285,6 +285,64 @@ function bounded(promise, signal) {
   });
 }
 
+async function localSessionCatalog(signal) {
+  const { readFile } = await import('node:fs/promises');
+  return {
+    listAll: () => SessionManager.listAll(undefined, signal),
+    async readEntries(path) {
+      const content = await readFile(path, { encoding: 'utf8', signal });
+      const entries = parseSessionEntries(content);
+      if (entries[0]?.type !== 'session' || entries.length !== content.split('\n').filter(line => line.trim()).length) throw new Error('Invalid local session');
+      return entries;
+    },
+  };
+}
+
+function chatAmounts(row) {
+  if (!object(row)) throw new Error('Invalid chat usage');
+  const amounts = {};
+  for (const [source, target] of [['weekly_limit_percent', 'weeklyLimitPercent'], ['five_hour_limit_percent', 'fiveHourLimitPercent']]) {
+    const measure = row[source];
+    if (measure != null && (typeof measure !== 'number' || !Number.isFinite(measure) || measure < 0)) throw new Error('Invalid chat percentage');
+    amounts[target] = measure ?? null;
+  }
+  const credits = row.balance_usage_credits;
+  if (credits != null && (typeof credits !== 'string' || !/^(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(credits) || !Number.isFinite(Number(credits)))) throw new Error('Invalid chat credits');
+  amounts.balanceUsageCredits = credits ?? null;
+  return amounts;
+}
+
+function topChatsReport(body, candidates, limited) {
+  if (!object(body) || !Array.isArray(body.threads)) throw new Error('Invalid chat usage');
+  const dataAsOf = resetTimestamp(body.data_as_of);
+  const requested = new Map(candidates.map(candidate => [candidate.id, candidate]));
+  const seen = new Set();
+  const data = [];
+  for (const row of body.threads) {
+    if (!object(row) || typeof row.thread_id !== 'string') throw new Error('Invalid chat identity');
+    if (!requested.has(row.thread_id)) continue;
+    if (seen.has(row.thread_id)) throw new Error('Duplicate chat identity');
+    seen.add(row.thread_id);
+    if (!['available', 'partial'].includes(row.data_status)) continue;
+    const amounts = chatAmounts(row);
+    if (row.groups != null && !Array.isArray(row.groups)) throw new Error('Invalid chat groups');
+    const groups = (row.groups ?? []).map(group => {
+      const cleaned = chatAmounts(group);
+      for (const [source, target] of [['model', 'model'], ['reasoning_effort', 'reasoningEffort'], ['speed', 'speed'], ['product_experience', 'productExperience']]) {
+        if (group[source] != null && typeof group[source] !== 'string') throw new Error('Invalid chat dimension');
+        cleaned[target] = group[source] == null ? null : value(group[source]);
+      }
+      return cleaned;
+    });
+    if (![amounts, ...groups].some(measures => ['weeklyLimitPercent', 'fiveHourLimitPercent', 'balanceUsageCredits'].some(field => measures[field] != null))) continue;
+    if (row.usage_source != null && typeof row.usage_source !== 'string') throw new Error('Invalid chat source');
+    const { id, ...metadata } = requested.get(row.thread_id);
+    data.push({ ...metadata, ...amounts, dataStatus: row.data_status, usageSource: row.usage_source == null ? null : value(row.usage_source), groups });
+  }
+  data.sort((a, b) => a.weeklyLimitPercent == null ? b.weeklyLimitPercent == null ? 0 : 1 : b.weeklyLimitPercent == null ? -1 : b.weeklyLimitPercent - a.weeklyLimitPercent);
+  return { data, coverage: { candidates: candidates.length, matched: data.length, limited }, dataAsOf };
+}
+
 export default function codexUsage(pi, services = {}) {
   const fetch = services.fetch ?? globalThis.fetch;
   const setInterval = services.setInterval ?? globalThis.setInterval;
@@ -315,6 +373,7 @@ export default function codexUsage(pi, services = {}) {
     const messages = cards.Messages;
     const resetCredits = sections['Reset credits'];
     const resetHistory = sections['Reset history'];
+    const topChats = sections['Top chats'];
     const left = limits?.windows[0]?.leftPercent;
     return {
       summary: left == null ? 'Codex usage · unavailable' : `Codex usage · ${left}% left`,
@@ -324,6 +383,7 @@ export default function codexUsage(pi, services = {}) {
       messages: { ...messages.range, data: messages.section?.data ?? [], dataAsOf: messages.section?.dataAsOf ?? null, updatedAt: messages.section?.at ?? null, stale: messages.section?.stale ?? false, error: authMessage ?? messages.section?.error ?? (messages.section ? null : 'Messages unavailable') },
       plugins: toolsSnapshot('Plugins', authMessage),
       skills: toolsSnapshot('Skills', authMessage),
+      topChats: { data: topChats?.data ?? [], coverage: topChats?.coverage ?? { candidates: 0, matched: 0, limited: false }, dataAsOf: topChats?.dataAsOf ?? null, updatedAt: topChats?.at ?? null, stale: topChats?.stale ?? false, error: authMessage ?? topChats?.error ?? (topChats ? null : 'Top chats unavailable') },
       resetCredits: { credits: resetCredits?.credits ?? [], available_count: resetCredits?.available_count ?? null, total_earned_count: resetCredits?.total_earned_count ?? null, dataAsOf: null, updatedAt: resetCredits?.at ?? null, stale: resetCredits?.stale ?? false, error: authMessage ?? resetCredits?.error ?? (resetCredits ? null : 'Reset credits unavailable') },
       resetHistory: { events: resetHistory?.events ?? [], window_start: resetHistory?.window_start ?? null, dataAsOf: resetHistory?.dataAsOf ?? null, updatedAt: resetHistory?.at ?? null, stale: resetHistory?.stale ?? false, error: authMessage ?? resetHistory?.error ?? (resetHistory ? null : 'Reset history unavailable') },
     };
@@ -478,9 +538,41 @@ export default function codexUsage(pi, services = {}) {
     const current = () => generation === work.generation && (!card || card.version === version);
     const timeout = setTimeout(() => work.controller.abort(), Math.max(0, deadline - Date.now()));
     work.promise = (async () => {
+        let catalogReady = false;
         try {
           const url = new URL(`${origin}/backend-api/wham/${path}`);
           const requestHeaders = new Headers(auth.headers);
+          const request = { method: 'GET', headers: requestHeaders, redirect: 'error', signal };
+          let candidates;
+          let limited;
+          if (title === 'Top chats') {
+            const catalog = services.sessionCatalog ?? await bounded(localSessionCatalog(signal), signal);
+            const sessions = (await bounded(catalog.listAll(), signal)).map(session => ({ id: session.id, path: session.path, name: session.name, created: session.created, modified: session.modified }));
+            const recent = sessions.filter(session => typeof session.id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(session.id) && Number.isFinite(+session.modified) && +session.modified >= now() - 30 * 86400000 && +session.modified <= now()).sort((a, b) => +b.modified - +a.modified);
+            const seen = new Set();
+            candidates = [];
+            for (const session of recent) {
+              if (seen.has(session.id)) continue;
+              seen.add(session.id);
+              const entries = await bounded(catalog.readEntries(session.path), signal);
+              if (!Array.isArray(entries)) throw new Error('Invalid local session');
+              if (!entries.some(entry => entry.type === 'message' && entry.message?.role === 'assistant' && entry.message.provider === 'openai-codex' && object(entry.message.usage) && Object.values(entry.message.usage).some(measure => typeof measure === 'number' && Number.isFinite(measure) && measure >= 0))) continue;
+              const createdAt = session.created != null && Number.isFinite(+session.created) ? +session.created : null;
+              candidates.push({ id: session.id, key: createHash('sha256').update(`${identity}:${session.id}`).digest('hex'), title: typeof session.name === 'string' && value(session.name).trim() ? value(session.name).trim() : `Untitled · ${localDate(createdAt ?? +session.modified)}`, createdAt, updatedAt: +session.modified });
+              if (candidates.length > 100) break;
+            }
+            limited = candidates.length > 100;
+            candidates = candidates.slice(0, 100);
+            catalogReady = true;
+            if (!current() || signal.aborted) return;
+            if (!candidates.length) {
+              sections[title] = { data: [], coverage: { candidates: 0, matched: 0, limited: false }, dataAsOf: null, at: now(), stale: false, error: null };
+              return;
+            }
+            request.method = 'POST';
+            requestHeaders.set('content-type', 'application/json');
+            request.body = JSON.stringify({ threads: candidates.map(candidate => ({ thread_id: candidate.id, created_at: candidate.createdAt == null ? null : new Date(candidate.createdAt).toISOString(), descendant_thread_ids: [] })) });
+          }
           if (card) {
             const parameters = { start_date: range.startDate, end_date: range.endDate, group_by: 'day' };
             if (title === 'History') requestHeaders.set('x-openai-codex-usage-categories', '1');
@@ -489,9 +581,10 @@ export default function codexUsage(pi, services = {}) {
             if (title === 'Skills') parameters.top_skill_limit = '10';
             url.search = new URLSearchParams(parameters).toString();
           }
-          const response = await bounded(fetch(url.href, { method: 'GET', headers: requestHeaders, redirect: 'error', signal }), signal);
+          const response = await bounded(fetch(url.href, request), signal);
           if (!response.ok) throw new Error('Unavailable');
-          const report = format(await bounded(response.json(), signal), range);
+          const body = await bounded(response.json(), signal);
+          const report = title === 'Top chats' ? topChatsReport(body, candidates, limited) : format(body, range);
           if (current() && !signal.aborted) {
             const section = { ...report, at: now(), stale: false, error: null };
             if (card) card.section = section;
@@ -499,6 +592,7 @@ export default function codexUsage(pi, services = {}) {
           }
         } catch {
           if (current()) {
+            if (title === 'Top chats' && !catalogReady) sections[title] = undefined;
             const section = card ? card.section : sections[title];
             if (section) {
               section.stale = true;
@@ -543,6 +637,7 @@ export default function codexUsage(pi, services = {}) {
       if (!options.card || hydrateDetails || options.card === 'Plugins') sources.push(['analytics/daily-plugin-usage-metrics', 'Plugins', (body, range) => toolsReport(body, range, 'plugin')]);
       if (!options.card || hydrateDetails || options.card === 'Skills') sources.push(['analytics/daily-skill-usage-metrics', 'Skills', (body, range) => toolsReport(body, range, 'skill')]);
       if (!options.card || hydrateDetails) sources.push(['rate-limit-reset-credits', 'Reset credits', resetCreditsReport], ['rate-limit-reset-credits/history', 'Reset history', resetHistoryReport]);
+      if (!options.card || hydrateDetails) sources.push(['usage/thread_usage/query_v2', 'Top chats']);
       detailsInitialized = true;
     }
     await Promise.all(sources.map(([path, title, format]) => readSource(auth, path, title, format, deadline)));
@@ -600,6 +695,8 @@ export default function codexUsage(pi, services = {}) {
   pi.on('session_shutdown', (_event, ctx) => { visible = false; sessionContext = undefined; clear(ctx); });
 }
 import { Buffer } from 'node:buffer';
+import { createHash } from 'node:crypto';
+import { SessionManager, parseSessionEntries } from '@earendil-works/pi-coding-agent';
 
 import { registerDesktopView } from './vendor/register-desktop-view.js';
 import { BACKGROUND_CONTEXT } from './dist/chord-context.js';

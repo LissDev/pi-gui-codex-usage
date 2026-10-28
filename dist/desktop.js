@@ -485,6 +485,77 @@ function tokenBreakdown(report, view, selectedDay, changeDay) {
   return region;
 }
 
+function topChats(report, view, change) {
+  const region = element('section', null, 'top-chats');
+  region.setAttribute('role', 'region');
+  region.setAttribute('aria-label', 'Top chats');
+  region.append(element('h2', 'Top chats'), freshness(report));
+  region.append(element('p', `Data as of: ${report.dataAsOf == null ? 'unknown' : localDate(report.dataAsOf)}`, 'freshness'));
+  if (report.error) region.append(element('p', report.error, 'error'));
+  const coverage = report.coverage;
+  region.append(element('p', `${coverage.matched} attributed of ${coverage.candidates} recent local Pi sessions updated within 30 days${coverage.limited ? ' · limited to the newest 100 eligible sessions' : ''}. Server attribution for the current account; each session is queried separately.`, 'history-range'));
+  region.append(element('p', 'Weekly and 5h values are server quota-window attribution, independent of Messages dates. Credits are reported attribution, not lifetime chat usage.', 'history-range'));
+  if (!report.data.length) {
+    region.append(element('p', report.error ? 'Chat attribution unavailable' : coverage.candidates ? 'No matching chat attribution available' : 'No recent Codex sessions within 30 days'));
+    return region;
+  }
+  const scroll = element('div', null, 'top-chats-scroll');
+  scroll.tabIndex = 0;
+  scroll.dataset.chatControl = 'table';
+  scroll.setAttribute('role', 'group');
+  scroll.setAttribute('aria-label', 'Chat usage table');
+  const table = element('table');
+  const head = element('thead');
+  const columns = element('tr');
+  for (const title of ['Chat', 'Weekly', 'Credits']) {
+    const th = element('th', title);
+    th.scope = 'col';
+    columns.append(th);
+  }
+  head.append(columns);
+  const rows = element('tbody');
+  const percent = measure => measure == null ? '—' : `${measure}%`;
+  const credits = measure => measure == null ? '—' : /[1-9]/.test(measure.split(/[eE]/)[0]) ? measure : '0';
+  for (const chat of report.data.slice(0, view.shown)) {
+    const row = element('tr');
+    const name = element('td');
+    const toggle = element('button', chat.title);
+    toggle.type = 'button';
+    toggle.dataset.chatControl = chat.key;
+    toggle.setAttribute('aria-expanded', String(view.expanded.has(chat.key)));
+    toggle.setAttribute('aria-controls', `chat-${chat.key}`);
+    toggle.onclick = () => { view.expanded.has(chat.key) ? view.expanded.delete(chat.key) : view.expanded.add(chat.key); change(); };
+    name.append(toggle);
+    row.append(name, element('td', percent(chat.weeklyLimitPercent)), element('td', credits(chat.balanceUsageCredits)));
+    rows.append(row);
+    if (view.expanded.has(chat.key)) {
+      const detailsRow = element('tr');
+      const details = element('td', null, 'chat-details');
+      details.colSpan = 3;
+      details.id = `chat-${chat.key}`;
+      details.append(element('p', `${chat.dataStatus} · ${chat.usageSource?.replaceAll('_', ' ') ?? 'Unknown usage source'}`));
+      const measures = item => [item.fiveHourLimitPercent != null && `5h ${percent(item.fiveHourLimitPercent)}`, item.weeklyLimitPercent != null && `Weekly ${percent(item.weeklyLimitPercent)}`, item.balanceUsageCredits != null && `Credits ${credits(item.balanceUsageCredits)}`].filter(Boolean).join(' · ');
+      details.append(element('p', measures(chat)));
+      if (chat.createdAt != null) details.append(element('p', `Created ${localDate(chat.createdAt)}`));
+      if (chat.updatedAt != null) details.append(element('p', `Session updated ${localDate(chat.updatedAt)}`));
+      for (const group of chat.groups) details.append(element('p', [group.model, group.reasoningEffort, group.speed, group.productExperience, measures(group)].filter(item => item != null && item !== '').join(' · ')));
+      detailsRow.append(details);
+      rows.append(detailsRow);
+    }
+  }
+  table.append(head, rows);
+  scroll.append(table);
+  region.append(scroll);
+  if (view.shown < report.data.length) {
+    const more = element('button', 'Show more');
+    more.type = 'button';
+    more.dataset.chatControl = 'more';
+    more.onclick = () => { const first = report.data[view.shown].key; view.shown += 5; change(first); };
+    region.append(more);
+  }
+  return region;
+}
+
 function freshness(section) {
   if (section.updatedAt == null && !section.stale) return element('span');
   const text = section.updatedAt == null ? 'Stale' : `${section.stale ? 'Stale · last successful update' : 'Updated'}: ${localDate(section.updatedAt)}`;
@@ -794,6 +865,7 @@ export async function mount(root, host) {
   let resetSelected = 0;
   let tokenDay;
   let tokenScroll;
+  const chatsView = { shown: 5, expanded: new Set(), scroll: 0 };
 
   function render(resetScroll = false) {
     const reportX = window.scrollX;
@@ -802,6 +874,9 @@ export async function mount(root, host) {
     if (tokenClients) tokenScroll = { day: tokenClients.dataset.day, left: tokenClients.scrollLeft };
     const focusedUsage = panel.querySelector('.usage-controls :focus, .token-detail:focus, .token-clients:focus')?.dataset.control;
     const focusedReset = panel.querySelector('.reset-tabs button:focus, #reset-details-panel:focus')?.id;
+    const focusedChat = panel.querySelector('[data-chat-control]:focus')?.dataset.chatControl;
+    const chatScroll = panel.querySelector('.top-chats-scroll');
+    if (chatScroll) chatsView.scroll = chatScroll.scrollLeft;
     if (resetScroll) scrollPositions.clear();
     else {
       for (const scroll of panel.querySelectorAll('.heatmap-scroll')) scrollPositions.set(scroll.dataset.history, scroll.scrollLeft);
@@ -814,6 +889,9 @@ export async function mount(root, host) {
     panel.setAttribute('aria-labelledby', tabs[selected].id);
     if (!verified || !snapshot) {
       tokenScroll = undefined;
+      chatsView.shown = 5;
+      chatsView.expanded.clear();
+      chatsView.scroll = 0;
       panel.replaceChildren(element('p', connection.textContent ? 'Report unavailable' : 'Loading report…'));
       return;
     }
@@ -836,6 +914,15 @@ export async function mount(root, host) {
         }));
       }
     } else {
+      if (snapshot.topChats) {
+        const validKeys = new Set(snapshot.topChats.data.map(chat => chat.key));
+        for (const key of chatsView.expanded) if (!validKeys.has(key)) chatsView.expanded.delete(key);
+        panel.append(topChats(snapshot.topChats, chatsView, focus => {
+          render();
+          if (focus) panel.querySelector(`[data-chat-control="${focus}"]`)?.focus({ preventScroll: true });
+        }));
+        panel.querySelector('.top-chats-scroll')?.scrollTo(chatsView.scroll, 0);
+      }
       if (snapshot.history) {
         if (!historyView.loading && snapshot.history.startDate === historyView.range.startDate && snapshot.history.endDate === historyView.range.endDate && !snapshot.history.data.some(day => day.date === historyView.day && day.attribution.some(row => row.value != null))) historyView.day = undefined;
         panel.append(usageHistory(snapshot.history, historyView, (range, days) => changeCardRange(historyView, range, days, 'refreshHistory'), field => { historyView.grouping = field; render(); }, day => { historyView.day = day; render(); }));
@@ -891,6 +978,7 @@ export async function mount(root, host) {
       if (focusedUsage) panel.querySelector(`[data-control="${focusedUsage}"]`)?.focus({ preventScroll: true });
     }
     if (focusedReset) panel.querySelector(`#${focusedReset}`)?.focus({ preventScroll: true });
+    if (focusedChat) panel.querySelector(`[data-chat-control="${focusedChat}"]`)?.focus({ preventScroll: true });
     window.scrollTo(reportX, reportY);
   }
 

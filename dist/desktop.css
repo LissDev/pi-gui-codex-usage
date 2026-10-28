@@ -91,6 +91,14 @@ svg text { fill: var(--foreground); font: 11px system-ui, sans-serif; }
 .token-clients th, .token-clients td { padding: 8px; text-align: right; border-bottom: 1px solid color-mix(in srgb, var(--foreground) 20%, transparent); }
 .token-clients th:first-child { text-align: left; }
 .token-clients caption { text-align: left; font-weight: 600; }
+.top-chats { min-width: 0; margin-bottom: 28px; }
+.top-chats-scroll { max-width: 100%; overflow-x: auto; margin: 12px 0; }
+.top-chats table { width: 100%; min-width: 440px; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.top-chats th, .top-chats td { padding: 8px; text-align: right; border-bottom: 1px solid color-mix(in srgb, var(--foreground) 20%, transparent); }
+.top-chats th:first-child, .top-chats td:first-child { text-align: left; }
+.top-chats td:first-child { width: 65%; }
+.top-chats td button { text-align: left; max-width: 100%; }
+.top-chats .chat-details { font-size: 12px; }
 .usage-tooltip { position: absolute; left: 0; max-width: 100%; padding: 8px; background: var(--background); color: var(--foreground); border: 1px solid var(--accent); border-radius: 4px; font-size: 12px; white-space: pre-line; z-index: 2; }
 .invocations { margin-top: 24px; }
 .invocations ul { margin: 0; padding-left: 18px; }

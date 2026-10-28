@@ -53,7 +53,7 @@ host-dismissed dock.
 
 The right report has two keyboard-accessible tabs: **Overview** for graphical
 quota meters, supplied account details and Usage limit resets, and **Analytics** for Usage history,
-Messages, Token breakdown, Plugins, Skills, all-time metrics,
+Messages, Token breakdown, Plugins, Skills, Top chats, all-time metrics,
 invocation details and daily, cumulative and weekly charts with calendar heatmaps. Close it
 with the native workbench control; Hide affects compact only. A mounted report
 refreshes on entry and every three minutes. Closing/disposal stops its frontend
@@ -157,7 +157,7 @@ Messages has its own local successful-fetch time, stale/error feedback and
 account/range cache. **Data as of** remains unknown when the source supplies no
 freshness timestamp. The Messages card shows message counts; its shared response
 also supplies the separate Token breakdown below. No credit or user-count fields
-enter these cards. Account changes clear all eight report sources and the next
+enter these cards. Account changes clear all nine report sources and the next
 public refresh reloads them, including when compact discovered the new account.
 
 ### Token breakdown
@@ -213,6 +213,33 @@ skill IDs are excluded from the report. Each card has its own stale/error state
 and local successful-fetch time. **Data as of** uses the source freshness timestamp
 when supplied, and says unknown when absent.
 
+### Top chats
+
+Top chats lists server attribution for recent local Pi sessions with actual
+`openai-codex` assistant usage. It considers sessions updated in the past 30 days,
+queries at most the newest 100 eligible distinct sessions, and shows matched
+coverage and the candidate cap. Each Pi session is queried independently with
+no descendant aggregation. This is limited local coverage, not an account-wide
+chat catalogue. Messages' date range does not filter this card.
+
+Rows rank by known weekly percentage, with unknown percentages last. These are
+server quota-window percentages; credits are reported attribution, not lifetime
+chat usage or token estimates. Explicit zero stays zero, missing values stay
+unknown, and credit decimals retain their exact values, including tiny positives.
+Expand a chat inline for supplied five-hour/weekly amounts, credits, model,
+reasoning, speed, product, status and source. Titles come only from explicit local
+session names, otherwise Untitled with a local date; no message-derived titles.
+Five rows appear initially. Show more reveals five cached rows and focuses the
+first new chat. Expansion, visibility and table reading position survive live
+updates and report-tab changes; reopening starts with five closed rows.
+
+The public Pi SDK lists sessions and parses read-only session files; this feature
+never opens, migrates or writes sessions. Discovery failures clear cached chat
+rows with safe unavailable feedback. Same-account server failures retain stale
+attribution; authentication loss and account changes clear it. Source Data as of
+and local Updated remain separate. Compact and same-account card range requests
+do not enumerate sessions or query Top chats.
+
 ### Token calendars
 
 Analytics starts with **Year** selected. **7 days / 30 days / 90 days / Year / All** controls
@@ -261,7 +288,7 @@ quota percentage is `100 − used percentage`. Other metrics come directly from
 the server: the extension does not estimate subscription token costs or invent
 token totals, reset credits or analytics endpoints.
 
-All eight sources keep separate last-success timestamps in memory. A failed,
+All nine sources keep separate last-success timestamps in memory. A failed,
 timed-out or malformed source update leaves its previous report marked **stale**,
 while a successful source can still update. Stale data is retained only after Pi
 successfully resolves the same current account using its `ChatGPT-Account-Id`
@@ -283,7 +310,7 @@ source calendar date across timezones; compact chart ticks use `MM.DD`.
 
 ## Network and privacy
 
-The extension makes only authenticated GET requests to:
+The extension makes authenticated GET requests to:
 
 ```text
 https://chatgpt.com/backend-api/wham/usage
@@ -312,8 +339,16 @@ Plugins and Skills send their selected dates, `group_by=day`,
 `top_skill_limit=10`. Only source dates, safe names/marketplace labels, invocation
 counts and the supplied freshness timestamp enter these cards.
 
+Top chats adds one authenticated POST to
+`https://chatgpt.com/backend-api/wham/usage/thread_usage/query_v2` when candidates
+exist. Its body contains only session UUIDs, creation timestamps (or null) and
+empty descendant lists, up to 100 sessions. Local names, file paths, message
+content, model details and local usage never enter requests. Names remain local
+display metadata; raw session IDs and paths never enter public report state.
+There is no empty-catalog POST, additional provider or chat-content request.
+
 The two reset-detail sources use no query parameters. Full report refreshes read
-all eight sources; compact refreshes continue to read only limits and the token
+the eight GET sources and Top chats; compact refreshes continue to read only limits and the token
 profile. Switching the reset card's local tabs changes presentation only.
 
 It checks Pi's provider and effective auth origins before sending credentials,

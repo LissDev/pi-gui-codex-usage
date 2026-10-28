@@ -1849,3 +1849,136 @@ for (const boundary of [
     }
   });
 }
+
+const topChatsSnapshot = () => ({ ...tokensSnapshot(), topChats: {
+  data: Array.from({ length: 12 }, (_, i) => ({ key: `opaque-chat-${i + 1}`, title: `Named chat ${i + 1}`, createdAt: timestamp - 86400000, updatedAt: timestamp - i * 1000, dataStatus: i === 1 ? 'partial' : 'available', usageSource: 'included_plan', weeklyLimitPercent: i === 1 ? 0 : 12 - i, fiveHourLimitPercent: i === 1 ? null : 0.5, balanceUsageCredits: i === 1 ? '0.000001' : '0E-10', groups: [{ model: 'gpt-6.1-sol', reasoningEffort: 'high', speed: 'standard', productExperience: null, weeklyLimitPercent: i === 1 ? 0 : 12 - i, fiveHourLimitPercent: null, balanceUsageCredits: '0.000001' }] })),
+  coverage: { candidates: 14, matched: 12, limited: false }, dataAsOf: timestamp - 3600000, updatedAt: timestamp, stale: false, error: null,
+} });
+async function topChatsRegion(page) {
+  await page.getByRole('tab', { name: 'Analytics', exact: true }).click();
+  const region = page.getByRole('region', { name: 'Top chats', exact: true });
+  assert.equal(await region.count(), 1, 'Analytics exposes Top chats as an inline labelled region');
+  return region;
+}
+const topChatToggle = (region, n) => region.getByRole('button', { name: new RegExp(`Named chat ${n}(?:$|\\s)`) });
+const topChatRows = region => region.getByRole('row').filter({ has: region.page().getByRole('button', { name: /Named chat \d/ }) });
+
+test('top chats: inline ranked table shows five rows, keyboard model details and cached five-row increments', async t => {
+  const page = await pageFor(t, topChatsSnapshot());
+  const region = await topChatsRegion(page);
+  assert.deepEqual(await page.getByRole('tab').allTextContents(), ['Overview', 'Analytics'], 'Top chats has no independent navigation stack');
+  assert.equal(await region.getByRole('table').count(), 1);
+  assert.match((await region.getByRole('columnheader').allTextContents()).join(' '), /Chat.*Weekly.*Credits/i);
+  assert.equal(await topChatRows(region).count(), 5);
+  assert.match(await topChatRows(region).first().innerText(), /Named chat 1[\s\S]*12\s*%[\s\S]*\b0\b/);
+  assert.match(await region.innerText(), /recent[\s\S]*30[\s\S]*14[\s\S]*12|12[\s\S]*14[\s\S]*30/i, 'Coverage describes recent local candidates and server attribution');
+  assert.match(await region.innerText(), /server|account/i);
+  assert.doesNotMatch(await region.innerText(), /token usage|all chats|all-time chats/i);
+  const disclosure = topChatToggle(region, 2);
+  assert.equal(await disclosure.getAttribute('aria-expanded'), 'false');
+  await disclosure.focus();
+  await page.keyboard.press('Enter');
+  assert.equal(await disclosure.getAttribute('aria-expanded'), 'true');
+  const text = await region.innerText();
+  assert.match(text, /partial/i);
+  assert.match(text, /gpt-6\.1-sol[\s\S]*high/);
+  assert.match(text, /0\.000001|<\s*0\.01/);
+  assert.ok(text.includes('0.000001') || (await region.locator('[title]').evaluateAll(nodes => nodes.map(node => node.title).join(' '))).includes('0.000001'), 'Tiny positive credits remain exact in visible details or a title');
+  assert.doesNotMatch(text, /5\s*(?:h|hours?)[^\n]*0\s*%/i, 'Missing five-hour measure cannot display zero');
+  const calls = await page.evaluate(() => window.probe.calls);
+  await region.getByRole('button', { name: 'Show more', exact: true }).click();
+  assert.equal(await topChatRows(region).count(), 10);
+  assert.match(await page.evaluate(() => document.activeElement?.textContent), /Named chat 6/, 'Show more focuses the first newly revealed chat');
+  await region.getByRole('button', { name: 'Show more', exact: true }).click();
+  assert.equal(await topChatRows(region).count(), 12);
+  assert.match(await page.evaluate(() => document.activeElement?.textContent), /Named chat 11/, 'The final increment keeps keyboard focus on a revealed row');
+  assert.equal(await region.getByRole('button', { name: 'Show more', exact: true }).count(), 0);
+  assert.equal(await page.evaluate(() => window.probe.calls), calls, 'Pagination and expansion use cached rows');
+  assert.equal(await region.getByRole('link').count(), 0, 'Rows do not open chats or files');
+  assert.equal(await region.getByRole('button', { name: /sign in|buy|delete|reset|consume/i }).count(), 0);
+});
+
+test('top chats: expanded opaque row and pagination survive live refresh, report tabs and Messages ranges, then remount resets', async t => {
+  const next = topChatsSnapshot();
+  const page = await pageFor(t, next);
+  await page.setViewportSize({ width: 320, height: 800 });
+  let region = await topChatsRegion(page);
+  const messages = page.getByRole('region', { name: 'Messages', exact: true });
+  await messages.getByRole('combobox', { name: 'Day details', exact: true }).selectOption({ label: '2026.10.26' });
+  await region.getByRole('button', { name: 'Show more', exact: true }).click();
+  await topChatToggle(region, 2).click();
+  await topChatToggle(region, 2).focus();
+  const scroll = region.getByRole('group', { name: 'Chat usage table', exact: true });
+  assert.ok(await scroll.evaluate(node => node.scrollWidth > node.clientWidth), 'The native table overflows horizontally in the narrow report');
+  const scrollLeft = await scroll.evaluate(node => {
+    node.scrollLeft = 24;
+    return node.scrollLeft;
+  });
+  assert.ok(scrollLeft > 0, 'Retention starts from an actual positive table reading offset');
+  const savedY = await page.evaluate(() => window.scrollY);
+  next.topChats.data = [next.topChats.data[1], next.topChats.data[0], ...next.topChats.data.slice(2)];
+  next.topChats.data[0].title = 'Named chat 2 renamed';
+  next.topChats.data[0].weeklyLimitPercent = 6.125;
+  next.topChats.data[0].balanceUsageCredits = '0.0000023';
+  await page.evaluate(state => window.probe.publish(state), next);
+  assert.equal(await topChatRows(region).count(), 10);
+  assert.equal(await topChatToggle(region, 2).getAttribute('aria-expanded'), 'true', 'Expansion follows opaque identity through reordered results');
+  assert.match(await page.evaluate(() => document.activeElement?.textContent), /Named chat 2 renamed/);
+  assert.equal(await page.evaluate(() => window.scrollY), savedY, 'Live refresh preserves report scroll');
+  assert.equal(await scroll.evaluate(node => node.scrollLeft), scrollLeft, 'Live refresh preserves positive table scroll');
+  assert.match(await topChatRows(region).first().innerText(), /Named chat 2 renamed[\s\S]*6\.125%[\s\S]*0\.0000023/, 'Preserved reading state still receives exact fresh row measures');
+  assert.equal(await messages.getByRole('combobox', { name: 'Day details', exact: true }).locator('option:checked').innerText(), '2026.10.26');
+  await page.getByRole('region', { name: 'Messages', exact: true }).getByRole('button', { name: '30 days', exact: true }).click();
+  await page.getByRole('tab', { name: 'Overview', exact: true }).click();
+  region = await topChatsRegion(page);
+  assert.equal(await topChatRows(region).count(), 10);
+  assert.equal(await topChatToggle(region, 2).getAttribute('aria-expanded'), 'true');
+  assert.equal(await scroll.evaluate(node => node.scrollLeft), scrollLeft, 'Messages range and outer-tab return preserve positive table scroll');
+  assert.match(await topChatRows(region).first().innerText(), /6\.125%[\s\S]*0\.0000023/);
+  assert.equal(await messages.getByRole('combobox', { name: 'Day details', exact: true }).locator('option:checked').innerText(), '2026.10.26', 'The independent Messages day remains selected');
+  assert.match(await region.innerText(), /30/);
+  await page.evaluate(async () => { window.probe.close(); await window.probe.mount(); });
+  region = await topChatsRegion(page);
+  assert.equal(await topChatRows(region).count(), 5);
+  assert.equal(await topChatToggle(region, 2).getAttribute('aria-expanded'), 'false');
+});
+
+test('top chats: stale, unmatched and empty candidates remain distinct and narrow layout keeps table overflow local', async t => {
+  const next = topChatsSnapshot();
+  const page = await pageFor(t, next);
+  await page.setViewportSize({ width: 320, height: 800 });
+  const region = await topChatsRegion(page);
+  assert.ok(await page.locator('#root').evaluate(node => node.scrollWidth <= innerWidth), 'Narrow report remains within the workbench');
+  next.topChats.stale = true;
+  next.topChats.error = 'Top chats unavailable';
+  await page.evaluate(state => window.probe.publish(state), next);
+  assert.match(await region.innerText(), /stale|last successful/i);
+  assert.match(await region.innerText(), /Named chat 1/);
+  next.topChats = { ...next.topChats, data: [], stale: false, error: null, coverage: { candidates: 100, matched: 0, limited: true } };
+  await page.evaluate(state => window.probe.publish(state), next);
+  assert.match(await region.innerText(), /no.*(?:attribut|match)|(?:attribut|match).*unavailable/i);
+  assert.match(await region.innerText(), /100|limit|cap/i, 'Candidate cap is disclosed independently of attribution');
+  assert.doesNotMatch(await region.innerText(), /\b0\s*%/);
+  next.topChats.coverage = { candidates: 0, matched: 0, limited: false };
+  await page.evaluate(state => window.probe.publish(state), next);
+  assert.match(await region.innerText(), /no recent.*(?:session|chat)|no.*(?:session|chat).*30/i);
+  assert.doesNotMatch(await region.innerText(), /\b0\s*%/);
+  assert.equal(await region.getByRole('button', { name: 'Show more', exact: true }).count(), 0);
+});
+
+test('top chats: source freshness remains distinct from fetch time and unknown source dates stay explicit', async t => {
+  const next = topChatsSnapshot();
+  next.topChats.dataAsOf = Date.parse('2026-10-22T06:45:00Z');
+  const page = await pageFor(t, next);
+  const region = await topChatsRegion(page);
+  assert.equal(await region.getByText('Updated: 2026.10.27 20:00', { exact: true }).count(), 1, 'The independent recent fetch timestamp remains visible');
+  assert.equal(await region.getByText('Data as of: 2026.10.22 09:45', { exact: true }).count(), 1, 'Top chats explicitly labels its older server source timestamp in local human-readable form');
+  assert.doesNotMatch(await region.innerText(), /2026-10-22T06:45:00Z/, 'Metadata uses the report date format');
+  for (const missing of [null, undefined]) {
+    if (missing === undefined) delete next.topChats.dataAsOf;
+    else next.topChats.dataAsOf = missing;
+    await page.evaluate(state => window.probe.publish(state), next);
+    assert.equal(await region.getByText(/^Data as of:/).innerText(), 'Data as of: unknown', 'A null or omitted source timestamp cannot borrow fetch time or become the epoch');
+    assert.equal(await region.getByText('Updated: 2026.10.27 20:00', { exact: true }).count(), 1, 'Unknown source freshness does not hide known fetch time');
+  }
+});

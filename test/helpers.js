@@ -1,7 +1,16 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { registerHooks } from 'node:module';
 
 const root = new URL('../', import.meta.url);
+registerHooks({
+  resolve(specifier, context, nextResolve) {
+    if (specifier === '@earendil-works/pi-coding-agent' && context.parentURL === new URL('index.js', root).href) {
+      return { url: new URL('pi-sdk-fixture.js', import.meta.url).href, shortCircuit: true };
+    }
+    return nextResolve(specifier, context);
+  },
+});
 const secret = 'TEST_ONLY_SECRET_NEVER_RENDER';
 const endpoint = 'https://chatgpt.com/backend-api/wham/usage';
 const analyticsEndpoint = 'https://chatgpt.com/backend-api/wham/profiles/me';
@@ -138,6 +147,7 @@ async function harness(options = {}) {
     },
   };
   const services = {
+    ...options.services,
     now: () => options.now ?? timestamp,
     ...(options.requestTimeoutMs == null ? {} : { requestTimeoutMs: options.requestTimeoutMs }),
     setInterval: (callback, ms) => { timers.set(++nextTimer, { callback, ms }); return nextTimer; },
@@ -145,6 +155,8 @@ async function harness(options = {}) {
     fetch: async (url, init) => {
       requests.push({ url: String(url), init });
       const usageCount = requests.filter(r => r.url === endpoint).length;
+      const route = options.routes?.[new URL(url).pathname];
+      if (route) return route(url, init);
       if (options.fetch) return options.fetch(url, init, usageCount);
       if (new URL(url).pathname === resetCreditsPath) return response(resetCredits);
       if (new URL(url).pathname === resetHistoryPath) return response(resetHistory);
