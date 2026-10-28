@@ -39,7 +39,7 @@ const usageAmount = (value, units) => `${value}${units === 'percent' ? '%' : ' c
 function chartControls(prefix, view, groupOptions, changeRange, changeGrouping, changeDay) {
   const { range: selection, days, grouping } = view;
   const controls = element('div', null, 'usage-controls');
-  for (const duration of [7, 30]) {
+  for (const duration of changeRange ? [7, 30] : []) {
     const button = element('button', `${duration} days`);
     button.type = 'button';
     button.dataset.control = `${prefix}-${duration}`;
@@ -50,7 +50,7 @@ function chartControls(prefix, view, groupOptions, changeRange, changeGrouping, 
     };
     controls.append(button);
   }
-  for (const [name, direction] of [['Previous', -1], ['Next', 1]]) {
+  for (const [name, direction] of changeRange ? [['Previous', -1], ['Next', 1]] : []) {
     const button = element('button', name);
     button.type = 'button';
     button.dataset.control = `${prefix}-${name}`;
@@ -317,52 +317,155 @@ function countChart(title, report, view, changeRange, changeGrouping, changeDay)
   const color = key => key === null ? 'var(--foreground)' : `var(--usage-series-${keys.indexOf(key) % 8})`;
   const dash = key => key === null ? '4 3' : keys.indexOf(key) < 8 ? 'none' : `${Math.floor(keys.indexOf(key) / 8) * 2 + 4} 3`;
   const pointStyle = key => keys.indexOf(key) < 8 ? { fill: color(key) } : { fill: 'var(--background)', stroke: color(key), 'stroke-width': 1.5 };
+  const byDate = new Map(chartData.map(day => [day.date, day]));
+  const series = [null, ...keys].map(key => ({
+    label: key === null ? tools ? 'Reported subtotal' : incomplete ? 'Known total / subtotal' : 'Reported total' : name(key),
+    values: new Map(chartData.map(day => [day.date, key === null ? day.total : day.groups.get(key)])),
+    color: color(key), width: key === null ? 1 : 2, dash: dash(key), point: pointStyle(key),
+  }));
+  const { svg, legend } = dailyLines(series, view, date => describe(byDate.get(date)));
+  svg.setAttribute('aria-label', `${title} by day; exact counts in Day details`);
+  region.append(svg, legend);
+  return region;
+}
+
+const tokenFields = [
+  ['Uncached input', 'uncached_text_input_tokens'],
+  ['Cached input', 'cached_text_input_tokens'],
+  ['Output', 'text_output_tokens'],
+  ['Reported total', 'text_total_tokens'],
+];
+
+function tokenDays(report, view) {
+  return report.data.filter(day => day.date >= view.range.startDate && day.date <= view.range.endDate && tokenFields.some(([, field]) => day.totals[field] != null || day.clients.some(client => client[field] != null)));
+}
+
+function tokenDifference(day) {
+  const components = tokenFields.slice(0, 3).map(([, field]) => day.totals[field]);
+  if (day.totals.text_total_tokens != null && components.every(count => count != null) && components.reduce((sum, count) => sum + count, 0) !== day.totals.text_total_tokens) return true;
+  return tokenFields.some(([, field]) => day.totals[field] != null && day.clients.length && day.clients.every(client => client[field] != null) && day.clients.reduce((sum, client) => sum + client[field], 0) !== day.totals[field]);
+}
+
+function dailyLines(series, view, describe, compactAxis = false) {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.classList.add('usage-chart');
   svg.setAttribute('viewBox', '0 0 360 220');
   svg.setAttribute('role', 'img');
-  svg.setAttribute('aria-label', `${title} by day; exact counts in Day details`);
-  const maximum = Math.max(1, ...chartData.flatMap(day => [day.total, ...day.groups.values()]));
+  const maximum = Math.max(1, ...series.flatMap(line => [...line.values.values()].filter(count => count != null)));
   for (const count of new Set([0, Math.ceil(maximum / 2), maximum])) {
     const y = 175 - count / maximum * 145;
     svgShape(svg, 'line', { x1: 36, x2: 348, y1: y, y2: y, class: 'grid-line' });
-    svgShape(svg, 'text', { x: 30, y: y + 4, 'text-anchor': 'end' }, String(count));
+    const label = compactAxis ? Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 0 }).format(count) : String(count);
+    svgShape(svg, 'text', { x: 30, y: y + 4, 'text-anchor': 'end' }, label);
   }
   const firstDate = Date.parse(`${view.range.startDate}T00:00:00Z`);
-  const byDate = new Map(chartData.map(day => [day.date, day]));
-  for (const key of [null, ...keys]) {
+  for (const line of series) {
     let path = '';
     let connected = false;
     for (let index = 0; index < view.days; index++) {
       const date = new Date(firstDate + index * 86400000).toISOString().slice(0, 10);
-      const day = byDate.get(date);
-      const count = key === null ? day?.total : day?.groups.get(key);
+      const count = line.values.get(date);
       if (count == null) { connected = false; continue; }
       const x = 36 + (index + .5) / view.days * 312;
       const y = 175 - count / maximum * 145;
       path += `${connected ? 'L' : 'M'}${x},${y} `;
       connected = true;
-      const point = svgShape(svg, 'circle', { cx: x, cy: y, r: 3, ...pointStyle(key) });
-      svgShape(point, 'title', {}, describe(day));
+      const point = svgShape(svg, 'circle', { cx: x, cy: y, r: 3, ...line.point });
+      svgShape(point, 'title', {}, describe(date));
     }
-    svgShape(svg, 'path', { d: path, fill: 'none', stroke: color(key), 'stroke-width': key === null ? 1 : 2, 'stroke-dasharray': dash(key) });
+    svgShape(svg, 'path', { d: path, fill: 'none', stroke: line.color, 'stroke-width': line.width, 'stroke-dasharray': line.dash });
   }
   for (const index of view.days === 7 ? [0, 1, 2, 3, 4, 5, 6] : [0, 7, 14, 21, view.days - 1]) {
     const date = new Date(firstDate + index * 86400000).toISOString().slice(0, 10);
     svgShape(svg, 'text', { x: 36 + (index + .5) / view.days * 312, y: 204, 'text-anchor': 'middle' }, calendarDate(date).slice(5));
   }
   const legend = element('ul', null, 'usage-legend');
-  for (const key of [null, ...keys]) {
+  for (const line of series) {
     const swatch = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     swatch.setAttribute('class', 'usage-swatch message-swatch');
     swatch.setAttribute('viewBox', '0 0 32 12');
     swatch.setAttribute('aria-hidden', 'true');
-    svgShape(swatch, 'line', { x1: 1, x2: 31, y1: 6, y2: 6, stroke: color(key), 'stroke-width': key === null ? 1 : 2, 'stroke-dasharray': dash(key) });
-    svgShape(swatch, 'circle', { cx: 16, cy: 6, r: 3, ...pointStyle(key) });
+    svgShape(swatch, 'line', { x1: 1, x2: 31, y1: 6, y2: 6, stroke: line.color, 'stroke-width': line.width, 'stroke-dasharray': line.dash });
+    svgShape(swatch, 'circle', { cx: 16, cy: 6, r: 3, ...line.point });
     const item = element('li');
-    item.append(swatch, element('span', key === null ? tools ? 'Reported subtotal' : incomplete ? 'Known total / subtotal' : 'Reported total' : name(key)));
+    item.append(swatch, element('span', line.label));
     legend.append(item);
   }
+  return { svg, legend };
+}
+
+function tokenBreakdown(report, view, selectedDay, changeDay) {
+  const region = element('section', null, 'usage-history');
+  region.setAttribute('role', 'region');
+  region.setAttribute('aria-label', 'Token breakdown');
+  region.append(element('h2', 'Token breakdown'), element('p', 'Period follows Messages', 'freshness'), element('p', `${calendarDate(view.range.startDate)} – ${calendarDate(view.range.endDate)}`, 'history-range'));
+  const { controls, daySelect } = chartControls('tokens', view, [], undefined, undefined, changeDay);
+  region.append(controls);
+  if (view.loading || report.startDate !== view.range.startDate || report.endDate !== view.range.endDate) {
+    region.append(element('p', 'Loading token breakdown…', 'freshness'));
+    return region;
+  }
+  region.append(freshness(report), element('p', `Data as of: ${report.dataAsOf == null ? 'unknown' : localDate(report.dataAsOf)}`, 'freshness'));
+  if (report.error) region.append(element('p', report.error, 'error'));
+  const days = tokenDays(report, view);
+  if (!days.length) {
+    if (!report.error) region.append(element('p', 'No token data in this range'));
+    return region;
+  }
+  const partial = new Set(days.map(day => day.date)).size < view.days || days.some(day => tokenFields.some(([, field]) => day.totals[field] == null));
+  region.append(element('p', `Known selected-window subtotals${partial ? ' · Partial: dates or measures are missing' : ''}`, 'freshness'));
+  region.append(metricList(tokenFields.map(([label, field]) => {
+    const known = days.map(day => day.totals[field]).filter(count => count != null);
+    return { label, value: known.length ? known.reduce((sum, count) => sum + count, 0) : 'Unknown' };
+  })));
+  if (days.some(tokenDifference)) region.append(element('p', 'Reported measures differ from component or complete client sums. Values are shown as supplied.', 'freshness'));
+  const describe = day => `${calendarDate(day.date)}\n${tokenFields.map(([label, field]) => `${label}: ${day.totals[field] == null ? 'Unknown' : amount(day.totals[field])}`).join('\n')}${tokenDifference(day) ? '\nReported measures differ from component or client sums' : ''}`;
+  appendDayDetails(region, daySelect, days, selectedDay, describe);
+  const chosen = days.find(day => day.date === selectedDay);
+  if (chosen) {
+    const detail = region.querySelector('.usage-day-details');
+    detail.classList.add('token-detail');
+    detail.tabIndex = 0;
+    detail.dataset.control = 'tokens-detail';
+    if (chosen.clients.length) {
+      const scroll = element('div', null, 'token-clients');
+      scroll.dataset.day = chosen.date;
+      scroll.tabIndex = 0;
+      scroll.dataset.control = 'tokens-clients';
+      scroll.setAttribute('role', 'group');
+      scroll.setAttribute('aria-label', 'Client token counts');
+      const table = element('table');
+      table.append(element('caption', 'Client token counts'));
+      const head = element('tr');
+      for (const label of ['Surface', ...tokenFields.map(([label]) => label)]) {
+        const cell = element('th', label);
+        cell.scope = 'col';
+        head.append(cell);
+      }
+      const header = element('thead');
+      header.append(head);
+      const body = element('tbody');
+      for (const client of chosen.clients) {
+        const row = element('tr');
+        const name = element('th', messageClients[client.client_id] ?? client.client_id);
+        name.scope = 'row';
+        row.append(name);
+        for (const [, field] of tokenFields) row.append(element('td', client[field] == null ? 'Unknown' : amount(client[field])));
+        body.append(row);
+      }
+      table.append(header, body);
+      scroll.append(table);
+      detail.append(scroll);
+    }
+  }
+  const byDate = new Map(days.map(day => [day.date, day]));
+  const series = tokenFields.map(([label, field], index) => ({
+    label, values: new Map(days.map(day => [day.date, day.totals[field]])),
+    color: `var(--usage-series-${index})`, width: 2, dash: index === 3 ? '4 3' : 'none',
+    point: { fill: `var(--usage-series-${index})` },
+  }));
+  const { svg, legend } = dailyLines(series, view, date => describe(byDate.get(date)), true);
+  svg.setAttribute('aria-label', 'Token breakdown by day; exact counts in Day details');
   region.append(svg, legend);
   return region;
 }
@@ -674,9 +777,13 @@ export async function mount(root, host) {
   const skillsView = { days: 30, range: { startDate: latestTools.start, endDate: latestTools.end }, day: undefined, loading: false, epoch: 0 };
   const cardViews = [historyView, messagesView, pluginsView, skillsView];
   let resetSelected = 0;
+  let tokenDay;
+  let tokenScroll;
 
   function render(resetScroll = false) {
-    const focusedUsage = panel.querySelector('.usage-controls :focus')?.dataset.control;
+    const tokenClients = panel.querySelector('.token-clients');
+    if (tokenClients) tokenScroll = { day: tokenClients.dataset.day, left: tokenClients.scrollLeft };
+    const focusedUsage = panel.querySelector('.usage-controls :focus, .token-detail:focus, .token-clients:focus')?.dataset.control;
     const focusedReset = panel.querySelector('.reset-tabs button:focus, #reset-details-panel:focus')?.id;
     if (resetScroll) scrollPositions.clear();
     else {
@@ -689,6 +796,7 @@ export async function mount(root, host) {
     });
     panel.setAttribute('aria-labelledby', tabs[selected].id);
     if (!verified || !snapshot) {
+      tokenScroll = undefined;
       panel.replaceChildren(element('p', connection.textContent ? 'Report unavailable' : 'Loading report…'));
       return;
     }
@@ -718,6 +826,11 @@ export async function mount(root, host) {
       if (snapshot.messages) {
         if (!messagesView.loading && snapshot.messages.startDate === messagesView.range.startDate && snapshot.messages.endDate === messagesView.range.endDate && !messageDays(snapshot.messages, messagesView).some(day => day.date === messagesView.day)) messagesView.day = undefined;
         panel.append(countChart('Messages', snapshot.messages, messagesView, (range, days) => changeCardRange(messagesView, range, days, 'refreshMessages'), field => { messagesView.grouping = field; render(); }, day => { messagesView.day = day; render(); }));
+        if (tokenDay < messagesView.range.startDate || tokenDay > messagesView.range.endDate || (!messagesView.loading && snapshot.messages.startDate === messagesView.range.startDate && snapshot.messages.endDate === messagesView.range.endDate && !tokenDays(snapshot.messages, messagesView).some(day => day.date === tokenDay))) tokenDay = undefined;
+        if (tokenScroll?.day !== tokenDay) tokenScroll = undefined;
+        panel.append(tokenBreakdown(snapshot.messages, messagesView, tokenDay, day => { tokenDay = day; render(); }));
+        const clients = panel.querySelector('.token-clients');
+        if (clients) clients.scrollLeft = tokenScroll?.left ?? 0;
       }
       for (const [title, report, view, method] of [['Plugins', snapshot.plugins, pluginsView, 'refreshPlugins'], ['Skills', snapshot.skills, skillsView, 'refreshSkills']]) {
         if (!report) continue;

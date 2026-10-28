@@ -4,7 +4,7 @@ import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { chromium } from '@playwright/test';
-import { harness, root, timestamp, plugins, skills, resetCredits, resetHistory } from './helpers.js';
+import { harness, root, timestamp, plugins, skills, resetCredits, resetHistory, tokenUsage } from './helpers.js';
 
 const snapshot = {
   summary: 'Codex usage · 75% left',
@@ -129,6 +129,159 @@ async function resetsRegion(page) {
   assert.equal(await region.count(), 1, 'Overview exposes its inline Usage limit resets card');
   return region;
 }
+
+const tokensSnapshot = () => { const next = resetsSnapshot(); next.messages.data = structuredClone(tokenUsage.data); return next; };
+const exactTokenText = text => text.replace(/[,\u00a0\u202f]/g, '');
+async function tokensRegion(page) {
+  await page.getByRole('tab', { name: 'Analytics', exact: true }).click();
+  const region = page.getByRole('region', { name: 'Token breakdown', exact: true });
+  assert.equal(await region.count(), 1, 'Analytics exposes Token breakdown from its existing Messages source');
+  return region;
+}
+
+test('tokens: four daily series keep large axes readable and exact totals/client details independent with mismatch qualification', async t => {
+  const page = await pageFor(t, tokensSnapshot(), 'Europe/Moscow', { viewport: { width: 320, height: 900 } });
+  const region = await tokensRegion(page);
+  const headings = await page.getByRole('tabpanel', { name: 'Analytics', exact: true }).getByRole('heading').allTextContents();
+  assert.ok(headings.indexOf('Messages') < headings.indexOf('Token breakdown'));
+  assert.ok(headings.indexOf('Token breakdown') < headings.indexOf('Plugins'));
+  assert.match(await region.innerText(), /(?:shared|same|follows)[^\n]*Messages|Messages[^\n]*(?:shared|same|period)/i);
+  const text = exactTokenText(await region.innerText());
+  for (const [label, count] of [['Uncached input', 1000001], ['Cached input', 2000002], ['Output', 7], ['Reported total', 9000009]]) assert.match(text, new RegExp(`${label}\\s*:?\\s*${count}\\b`, 'i'), 'Known selected-window values remain exact rather than K/M rounded');
+  assert.match(text, /known subtotal|known.*selected|selected.*known/i);
+  assert.match(text, /differ|discrepan|inconsistent|do not match|does not match/i, 'Independent reported total is preserved and qualified');
+  const chart = region.locator('svg.usage-chart');
+  assert.equal(await chart.count(), 1);
+  assert.equal(await chart.locator('path, polyline').count(), 4, 'Three components and reported total are distinct series');
+  assert.match(await chart.textContent(), /10\.26/);
+  const yLabels = chart.locator('text[x="30"][text-anchor="end"]');
+  const boxes = await yLabels.evaluateAll(nodes => nodes.map(node => { const box = node.getBBox(); return { text: node.textContent, x: box.x, y: box.y, width: box.width, height: box.height }; }));
+  assert.ok(boxes.length >= 2 && boxes.some(box => /[KM]/i.test(box.text)), 'Million-token axes use readable compact units');
+  assert.ok(boxes.every(box => box.x >= 0 && box.x + box.width <= 360), 'Large axis labels stay inside the chart');
+  boxes.sort((first, second) => first.y - second.y);
+  assert.ok(boxes.every((box, index) => index === 0 || boxes[index - 1].y + boxes[index - 1].height <= box.y), 'Count-axis labels do not overlap');
+  await region.getByRole('combobox', { name: 'Day details', exact: true }).selectOption({ label: '2026.10.26' });
+  const detail = region.getByRole('region', { name: 'Day details', exact: true });
+  assert.match(exactTokenText(await detail.innerText()), /Reported total\s*:?\s*9000009\b/i);
+  const clients = detail.getByRole('table');
+  assert.equal(await clients.count(), 1, 'Exact day detail contains the supplied per-client token measures');
+  const rows = await clients.getByRole('row').allInnerTexts();
+  const cli = exactTokenText(rows.find(row => /CLI/.test(row)) ?? '');
+  assert.match(cli, /1000001/);
+  assert.match(cli, /1000010/);
+  assert.match(cli, /\b0\b/);
+  assert.match(cli, /\b9\b/);
+  const web = exactTokenText(rows.find(row => /Web/.test(row)) ?? '');
+  assert.match(web, /unknown|missing|unavailable|—/i, 'Null client cache count is not coerced to zero');
+  assert.match(web, /500/);
+  assert.doesNotMatch(await region.innerText(), /By model|gpt-6\.1-sol|Other tokens|residual/i);
+});
+
+test('tokens: token-known days remain inspectable when turns are unknown and null/missing/zero/stale states stay distinct', async t => {
+  const next = tokensSnapshot();
+  next.messages.data.unshift(
+    { date: '2026-10-24', totals: { turns: null, uncached_text_input_tokens: null, cached_text_input_tokens: null, text_output_tokens: null, text_total_tokens: null }, clients: [], models: [] },
+    { date: '2026-10-25', totals: { turns: null, uncached_text_input_tokens: 0, cached_text_input_tokens: null, text_output_tokens: 0, text_total_tokens: 0 }, clients: [], models: [] },
+  );
+  const page = await pageFor(t, next);
+  const region = await tokensRegion(page);
+  const days = region.getByRole('combobox', { name: 'Day details', exact: true });
+  assert.equal(await days.evaluate(node => node.tagName), 'SELECT');
+  const box = await days.boundingBox();
+  assert.ok(box && box.height >= 40 && box.width >= 24);
+  const options = await days.locator('option').allTextContents();
+  assert.ok(options.some(label => label.includes('2026.10.25')), 'Known zero token day is independent of unknown message turns');
+  assert.ok(!options.some(label => /2026\.10\.24|2026\.10\.27/.test(label)), 'Unknown and absent token days are not zero details');
+  await days.selectOption({ label: '2026.10.25' });
+  const detail = region.getByRole('region', { name: 'Day details', exact: true });
+  assert.match(await detail.innerText(), /Uncached input\s*:?\s*0\b/i);
+  assert.match(await detail.innerText(), /Cached input\s*:?\s*(?:unknown|missing|unavailable|—)/i);
+  assert.match(await region.innerText(), /partial|incomplete|missing/i);
+  assert.match(await region.innerText(), /data as of[^\n]*unknown/i);
+  assert.equal(await page.getByRole('region', { name: 'Messages', exact: true }).getByRole('combobox', { name: 'Day details', exact: true }).locator('option', { hasText: '2026.10.25' }).count(), 0);
+  next.messages = { ...next.messages, stale: true, error: 'Messages unavailable' };
+  await page.evaluate(state => window.probe.publish(state), next);
+  for (const card of [region, page.getByRole('region', { name: 'Messages', exact: true })]) {
+    assert.match(await card.innerText(), /stale/i);
+    assert.match(await card.innerText(), /unavailable/i);
+  }
+  assert.match(await detail.innerText(), /Uncached input\s*:?\s*0\b/i);
+  next.messages = { ...next.messages, stale: false, error: null, data: [] };
+  await page.evaluate(state => window.probe.publish(state), next);
+  assert.match(await region.innerText(), /no[^\n]*(?:token|data)|empty/i);
+  assert.equal(await page.getByRole('heading', { name: 'Daily', exact: true }).count(), 1, 'Existing lifetime token calendars remain independent');
+});
+
+test('tokens: shared Messages range uses one request and preserves independent day/filter/focus state through updates, tabs and remount', async t => {
+  const next = tokensSnapshot();
+  const page = await pageFor(t, next);
+  let region = await tokensRegion(page);
+  const messages = page.getByRole('region', { name: 'Messages', exact: true });
+  const history = page.getByRole('region', { name: 'Usage history', exact: true });
+  await history.getByRole('combobox', { name: 'Group by', exact: true }).selectOption({ label: 'By model' });
+  await history.getByRole('combobox', { name: 'Day details', exact: true }).selectOption({ label: '2026.10.26' });
+  assert.equal(await region.getByRole('button', { name: /^(?:7 days|30 days|Previous|Next)$/ }).count(), 0, 'Messages alone owns the shared date controls');
+  const scroll = page.locator('.heatmap-scroll').first();
+  await scroll.evaluate(node => { node.scrollLeft = 31; });
+  const readingPosition = await scroll.evaluate(node => node.scrollLeft);
+  await messages.getByRole('button', { name: '30 days', exact: true }).click();
+  assert.equal(await page.evaluate(() => window.probe.messagesCalls.length), 1);
+  assert.deepEqual(await page.evaluate(() => window.probe.messagesCalls.at(-1)), { startDate: '2026-09-28', endDate: '2026-10-27' });
+  assert.match(await region.innerText(), /2026\.09\.28[\s\S]*2026\.10\.27/);
+  const days = region.getByRole('combobox', { name: 'Day details', exact: true });
+  await days.selectOption({ label: '2026.10.26' });
+  await messages.getByRole('combobox', { name: 'Group by', exact: true }).selectOption({ label: 'By surface' });
+  assert.match(exactTokenText(await region.getByRole('region', { name: 'Day details', exact: true }).innerText()), /9000009/);
+  next.messages = { ...next.messages, startDate: '2026-09-28' };
+  await page.evaluate(state => window.probe.publish(state), next);
+  await days.focus();
+  await page.evaluate(() => window.probe.tickInterval(60000));
+  assert.equal(await days.evaluate(node => node === document.activeElement), true);
+  await page.getByRole('tab', { name: 'Overview', exact: true }).click();
+  region = await tokensRegion(page);
+  assert.match(await region.getByRole('region', { name: 'Day details', exact: true }).innerText(), /2026\.10\.26/);
+  assert.equal(await history.getByRole('combobox', { name: 'Group by', exact: true }).locator('option:checked').innerText(), 'By model');
+  assert.match(await history.getByRole('region', { name: 'Day details', exact: true }).innerText(), /2026\.10\.26/);
+  assert.equal(await scroll.evaluate(node => node.scrollLeft), readingPosition);
+  assert.equal(await page.getByRole('group', { name: 'History period', exact: true }).getByRole('button', { name: 'Year', exact: true }).getAttribute('aria-pressed'), 'true');
+  await messages.getByRole('button', { name: 'Previous', exact: true }).click();
+  assert.equal(await region.getByRole('region', { name: 'Day details', exact: true }).count(), 0, 'Shared range changes clear an invalid token-day selection');
+  await messages.getByRole('button', { name: '7 days', exact: true }).click();
+  assert.equal(await page.evaluate(() => window.probe.messagesCalls.length), 3);
+  assert.deepEqual(await page.evaluate(() => [window.probe.historyCalls.length, window.probe.pluginsCalls.length, window.probe.skillsCalls.length]), [0, 0, 0]);
+  await page.evaluate(async () => { window.probe.close(); await window.probe.mount(); });
+  region = await tokensRegion(page);
+  assert.match(await region.innerText(), /2026\.10\.21[\s\S]*2026\.10\.27/);
+  assert.equal(await region.getByRole('region', { name: 'Day details', exact: true }).count(), 0);
+});
+
+test('tokens: client-table horizontal reading position survives same-day live updates and outer-tab return', async t => {
+  const next = tokensSnapshot();
+  const page = await pageFor(t, next, 'Europe/Moscow', { viewport: { width: 320, height: 900 } });
+  let region = await tokensRegion(page);
+  await region.getByRole('combobox', { name: 'Day details', exact: true }).selectOption({ label: '2026.10.26' });
+  const clients = region.getByRole('group', { name: 'Client token counts', exact: true });
+  const dimensions = await clients.evaluate(node => ({ width: node.clientWidth, content: node.scrollWidth }));
+  assert.ok(dimensions.content > dimensions.width, 'Narrow client table actually overflows horizontally');
+  await clients.evaluate(node => { node.scrollLeft = node.scrollWidth - node.clientWidth; });
+  const readingPosition = await clients.evaluate(node => node.scrollLeft);
+  assert.ok(readingPosition > 0, 'Regression begins with a real nonzero position reading rightmost token columns');
+  next.messages.updatedAt = timestamp + 60000;
+  next.messages.data[0].clients[0].text_output_tokens = 12;
+  next.messages.data[0].clients[0].text_total_tokens = 1000013;
+  next.messages.data[0].totals.text_output_tokens = 10;
+  next.messages.data[0].totals.text_total_tokens = 9000012;
+  await page.evaluate(state => window.probe.publish(state), next);
+  assert.equal(await region.getByRole('combobox', { name: 'Day details', exact: true }).locator('option:checked').innerText(), '2026.10.26');
+  const cli = clients.getByRole('row', { name: /^CLI\b/ });
+  assert.match(exactTokenText(await cli.innerText()), /\b12\b/);
+  assert.match(exactTokenText(await cli.innerText()), /\b1000013\b/, 'Same-day new source values are actually rendered');
+  assert.equal(await clients.evaluate(node => node.scrollLeft), readingPosition, 'Live replacement preserves the client-table horizontal reading position');
+  await page.getByRole('tab', { name: 'Overview', exact: true }).click();
+  region = await tokensRegion(page);
+  assert.equal(await region.getByRole('combobox', { name: 'Day details', exact: true }).locator('option:checked').innerText(), '2026.10.26');
+  assert.equal(await region.getByRole('group', { name: 'Client token counts', exact: true }).evaluate(node => node.scrollLeft), readingPosition, 'Returning to the same selected token day preserves its reading position');
+});
 
 const countdownNow = Date.parse('2026-10-27T00:30:00+03:00');
 const quotaCard = (page, label) => page.locator('section.quota').filter({ has: page.getByRole('heading', { name: label, exact: true }) });

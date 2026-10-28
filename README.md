@@ -53,7 +53,7 @@ host-dismissed dock.
 
 The right report has two keyboard-accessible tabs: **Overview** for graphical
 quota meters, supplied account details and Usage limit resets, and **Analytics** for Usage history,
-Messages, Plugins, Skills, all-time metrics,
+Messages, Token breakdown, Plugins, Skills, all-time metrics,
 invocation details and daily, cumulative and weekly charts with calendar heatmaps. Close it
 with the native workbench control; Hide affects compact only. A mounted report
 refreshes on entry and every three minutes. Closing/disposal stops its frontend
@@ -147,13 +147,42 @@ does not fabricate a zero for a missing day.
 
 Messages has its own local successful-fetch time, stale/error feedback and
 account/range cache. **Data as of** remains unknown when the source supplies no
-freshness timestamp. The card contains counts only, without token, credit or
-user-count fields. Account changes clear all eight report sources and the next
+freshness timestamp. The Messages card shows message counts; its shared response
+also supplies the separate Token breakdown below. No credit or user-count fields
+enter these cards. Account changes clear all eight report sources and the next
 public refresh reloads them, including when compact discovered the new account.
+
+### Token breakdown
+
+Token breakdown follows Messages and shares its selected period and source.
+Change **7 days / 30 days** or **Previous / Next** in Messages to update both
+cards with one existing request. There are no additional token period controls,
+network sources or refresh timers. Messages' model/surface grouping does not
+change the token measures; no per-model token data is inferred.
+
+Four independent daily lines show **Uncached input**, **Cached input**, **Output**
+and **Reported total**. Selected-window values are known subtotals of supplied
+counts. Missing dates or measures mark completeness partial and remain chart
+gaps; explicit zero stays zero. Reported total is preserved independently of
+component and client sums. Discrepancies are labelled without forcing values to
+match or inventing extra tokens. Chart axes use compact K/M labels where needed;
+subtotals and exact details keep the full unrounded counts.
+
+Its own native **Day details** selector includes token-known days even when their
+message count is unknown. It shows all four daily measures and a horizontally
+scrollable client table with the same four supplied measures. Missing cells say
+Unknown, never zero. Client identities retain separate rows using readable
+surface names. The selected token day survives live updates and tab changes,
+clears outside Messages' selected range, and resets on reopening. It is separate
+from Messages' selected day and the lifetime token calendars.
+
+Token breakdown reuses Messages' last-success time, source freshness, stale/error
+state and account/session checks. Invalid supplied token counts fail that shared
+source safely, retaining same-account/range last-known data.
 
 ### Plugins and Skills
 
-Two named invocation-count charts follow Messages. Each defaults to the latest
+Two named invocation-count charts follow Token breakdown. Each defaults to the latest
 **30 days**, with its own **7 days / 30 days**, **Previous / Next** and native
 **Day details** selector. Their ranges and selected days survive tab changes and
 live updates independently; reopening restores 30 days. A same-account range
@@ -265,8 +294,9 @@ amounts and attribution dimensions enter the report; per-model credit metadata
 is not added again to the attribution values.
 
 Messages sends its selected `start_date`, `end_date`, `group_by=day` and
-`workspace_user=true`. Only sanitized source dates, total message counts and
-model/client message counts enter that card. Neither card requests private
+`workspace_user=true`. Only sanitized source dates, message counts and the four
+proved token measures in daily totals/client rows enter the shared data. Model
+rows contain message counts only. These cards do not request private
 thread contents or account mutations.
 
 Plugins and Skills send their selected dates, `group_by=day`,
@@ -284,7 +314,7 @@ be unavailable for an account. A working Codex subscription does not guarantee
 every metric is returned.
 
 Only usage fields and safe statistics metadata enter the report. Profile names,
-email, avatar URLs and opaque invocation IDs are omitted. Tokens, auth headers,
+email, avatar URLs and opaque invocation IDs are omitted. OAuth tokens, auth headers,
 raw error bodies and usage reports are never logged or persisted by this
 extension. Its only session entries are `codex-usage.visibility` with a boolean.
 Pi and pi-gui retain ownership of their own credential and UI storage.

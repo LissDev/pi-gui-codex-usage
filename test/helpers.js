@@ -15,6 +15,11 @@ const resetHistory = { events: [{ kind: 'granted', occurred_at: '2026-10-07T20:4
 const plugins = { group_by: 'day', data_freshness_ts: '2026-10-27T16:00:00Z', data: [{ date: '2026-10-26', plugin_usage_overviews: [{ plugin_name: 'files', display_name: 'Files', marketplace: 'official', invocation_counts: 5 }] }] };
 const skills = { group_by: 'day', data_freshness_ts: '2026-10-27T15:00:00Z', data: [{ date: '2026-10-26', skill_usage_overviews: [{ skill_name: 'review', display_name: 'Review', invocation_counts: 3 }] }] };
 const messages = { data: [{ date: '2026-10-26', totals: { turns: 8 }, models: [{ model: 'gpt-6.1-sol', turns: 8 }], clients: [{ client_id: 'CODEX_CLI', turns: 8 }] }] };
+const tokenUsage = { data: [{ date: '2026-10-26', totals: { turns: 8, uncached_text_input_tokens: 1000001, cached_text_input_tokens: 2000002, text_output_tokens: 7, text_total_tokens: 9000009 },
+  models: [{ model: 'gpt-6.1-sol', turns: 8 }], clients: [
+    { client_id: 'CODEX_CLI', turns: 5, uncached_text_input_tokens: 1000001, cached_text_input_tokens: 0, text_output_tokens: 9, text_total_tokens: 1000010 },
+    { client_id: 'CODEX_WEB', turns: 3, uncached_text_input_tokens: 0, cached_text_input_tokens: null, text_output_tokens: 5, text_total_tokens: 500 },
+  ] }] };
 const timestamp = Date.parse('2026-10-27T17:00:00Z');
 const usage = {
   plan_type: 'plus',
@@ -186,4 +191,4 @@ async function harness(options = {}) {
   };
 }
 
-export { root, secret, endpoint, analyticsEndpoint, messagesPath, messages, pluginsPath, skillsPath, plugins, skills, resetCreditsPath, resetHistoryPath, resetCredits, resetHistory, timestamp, usage, analytics, response, loadExtension, harness };
+export { root, secret, endpoint, analyticsEndpoint, messagesPath, messages, tokenUsage, pluginsPath, skillsPath, plugins, skills, resetCreditsPath, resetHistoryPath, resetCredits, resetHistory, timestamp, usage, analytics, response, loadExtension, harness };

@@ -187,14 +187,21 @@ function messagesReport(body, range) {
     if (!Number.isInteger(turns) || turns < 0) throw new Error('Invalid message count');
     return turns;
   };
+  const tokens = source => {
+    const measures = {};
+    for (const field of ['uncached_text_input_tokens', 'cached_text_input_tokens', 'text_output_tokens', 'text_total_tokens']) {
+      if (Object.hasOwn(source ?? {}, field)) measures[field] = count(source[field]);
+    }
+    return measures;
+  };
   const data = body.data.map(day => {
     if (!object(day) || !validDate(day.date)) throw new Error('Invalid messages date');
-    const normalized = { date: day.date, totals: { turns: count(day.totals?.turns) } };
+    const normalized = { date: day.date, totals: { turns: count(day.totals?.turns), ...tokens(day.totals) } };
     for (const [field, name] of [['models', 'model'], ['clients', 'client_id']]) {
       if (day[field] != null && !Array.isArray(day[field])) throw new Error('Invalid message groups');
       normalized[field] = (day[field] ?? []).map(group => {
         if (!object(group) || typeof group[name] !== 'string') throw new Error('Invalid message group');
-        return { [name]: value(group[name]).trim(), turns: count(group.turns) };
+        return { [name]: value(group[name]).trim(), turns: count(group.turns), ...(field === 'clients' ? tokens(group) : {}) };
       });
     }
     return normalized;

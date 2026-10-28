@@ -106,12 +106,12 @@ test('messages: count whitelist preserves null and zero, rejects invalid counts/
   const h = await backend({ messagesFetch: () => response(current) });
   await open(h);
   const normalized = report(h);
-  assert.deepEqual(normalized.data, [{ date: '2026-10-26', totals: { turns: 9 }, models: [
+  assert.deepEqual(normalized.data, [{ date: '2026-10-26', totals: { turns: 9, text_total_tokens: 999 }, models: [
     { model: 'gpt-6.1-sol', turns: 7 }, { model: 'other', turns: 0 }, { model: 'codex-auto-review', turns: null }, { model: 'future-model', turns: null },
   ], clients: [{ client_id: 'CODEX_CLI', turns: 0 }, { client_id: 'CODEX_WEB', turns: null }] }]);
   assert.equal(normalized.dataAsOf, null);
   assert.equal(normalized.updatedAt, timestamp);
-  assert.doesNotMatch(JSON.stringify(normalized), /PRIVATE|users|tokens|credits|999|333|222|111|TEST_ONLY/);
+  assert.doesNotMatch(JSON.stringify(normalized), /PRIVATE|users|credits|333|222|111|TEST_ONLY/);
   for (const invalid of [-1, 1.5, '3']) {
     current = counts(invalid);
     await h.detailsService().refresh();
