@@ -5,6 +5,35 @@ workbench. A standalone extension for vanilla **pi-gui 1.0.1**, whose bundled
 Pi SDK is 0.87.1. All frontend assets ship ready to use; no build or manual
 settings are required.
 
+## Screenshots
+
+These screenshots use illustrative demo data, not a real account or chat history.
+
+**Overview** — Plan limits, remaining quota and reset countdowns in the detailed report.
+
+![Codex Usage Overview showing demo plan limits, quota meters and reset countdowns](docs/screenshots/overview.png)
+
+<details>
+<summary>Explore the Analytics screenshots</summary>
+
+**Usage history and Messages** — Daily reported usage and message counts, with period and grouping controls.
+
+![Usage history and Messages charts with demo daily values and period controls](docs/screenshots/usage-history.png)
+
+**Token breakdown** — Uncached input, cached input, output and reported total for the Messages period.
+
+![Token breakdown chart showing four token measures from demo data](docs/screenshots/token-breakdown.png)
+
+**Plugins and Skills** — Named invocation counts returned for the selected periods.
+
+![Plugins and Skills invocation charts using demo names and counts](docs/screenshots/tool-activity.png)
+
+**Top chats** — Ranked attribution for eligible recent local Pi sessions, with expandable details.
+
+![Top chats showing demo local session names and quota attribution](docs/screenshots/top-chats.png)
+
+</details>
+
 ## Install
 
 ```sh
