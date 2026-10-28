@@ -866,6 +866,37 @@ export async function mount(root, host) {
   let tokenDay;
   let tokenScroll;
   const chatsView = { shown: 5, expanded: new Set(), scroll: 0 };
+  const chartLayouts = new WeakMap();
+
+  function resizeCharts() {
+    if (disposed) return;
+    for (const svg of panel.querySelectorAll('.usage-chart, .history > svg')) {
+      let layout = chartLayouts.get(svg);
+      if (!layout) {
+        const { width, height } = svg.viewBox.baseVal;
+        const left = Number(svg.querySelector('.grid-line').getAttribute('x1'));
+        const coordinates = [...svg.querySelectorAll('[x], [x1], [cx], [d]')].map(node => ({
+          node,
+          attributes: ['x', 'x1', 'x2', 'cx', 'width', 'd'].filter(name => node.hasAttribute(name)).map(name => [name, node.getAttribute(name)]),
+        }));
+        layout = { width, height, left, coordinates };
+        chartLayouts.set(svg, layout);
+      }
+      const width = svg.getBoundingClientRect().width;
+      if (width <= layout.left + 12 || width === layout.fittedWidth) continue;
+      const scale = (width - layout.left - 12) / (layout.width - layout.left - 12);
+      const x = value => value < layout.left ? value : layout.left + (value - layout.left) * scale;
+      for (const { node, attributes } of layout.coordinates) {
+        for (const [name, value] of attributes) {
+          node.setAttribute(name, name === 'd' ? value.replace(/([ML])([\d.e+-]+),/g, (_, command, value) => `${command}${x(Number(value))},`) : name === 'width' ? Number(value) * scale : x(Number(value)));
+        }
+      }
+      svg.setAttribute('viewBox', `0 0 ${width} ${layout.height}`);
+      layout.fittedWidth = width;
+    }
+  }
+  const chartResize = new ResizeObserver(resizeCharts);
+  chartResize.observe(panel);
 
   function render(resetScroll = false) {
     const reportX = window.scrollX;
@@ -953,7 +984,7 @@ export async function mount(root, host) {
         panel.append(group);
       }
       if (section.daily.length || section.cumulative.length || section.weekly.length) {
-        const controls = element('div', null, 'periods');
+        const controls = element('div', null, 'periods usage-periods');
         controls.setAttribute('role', 'group');
         controls.setAttribute('aria-label', 'History period');
         for (const [name, days] of [['7 days', 7], ['30 days', 30], ['90 days', 90], ['Year', 365], ['All', 'all']]) {
@@ -979,6 +1010,7 @@ export async function mount(root, host) {
     }
     if (focusedReset) panel.querySelector(`#${focusedReset}`)?.focus({ preventScroll: true });
     if (focusedChat) panel.querySelector(`[data-chat-control="${focusedChat}"]`)?.focus({ preventScroll: true });
+    resizeCharts();
     window.scrollTo(reportX, reportY);
   }
 
@@ -1006,6 +1038,7 @@ export async function mount(root, host) {
     disposed = true;
     clearInterval(timer);
     clearInterval(countdownTimer);
+    chartResize.disconnect();
     unsubscribe?.();
     host.signal.removeEventListener('abort', dispose);
     for (const tab of tabs) { tab.onclick = null; tab.onkeydown = null; }

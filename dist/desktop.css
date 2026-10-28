@@ -56,12 +56,12 @@ button:hover { background: color-mix(in srgb, var(--foreground) 7%, transparent)
 dt { font-size: 12px; opacity: .8; }
 dd { margin: 3px 0 0; font-variant-numeric: tabular-nums; }
 .history { margin-top: 28px; }
-svg { width: 100%; height: auto; max-height: 160px; display: block; margin: 12px 0; overflow: visible; }
+svg { width: 100%; height: 140px; max-height: 160px; display: block; margin: 12px 0; overflow: visible; }
 svg text { fill: var(--foreground); font: 11px system-ui, sans-serif; }
 .grid-line { stroke: color-mix(in srgb, var(--foreground) 18%, transparent); }
 .data-line { fill: none; stroke: var(--accent); stroke-width: 2; }
 .data-point { fill: var(--accent); }
-.periods { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 24px; }
+.periods { margin-top: 24px; }
 .usage-history { position: relative; margin-bottom: 28px; }
 .usage-controls { display: flex; flex-direction: column; gap: 12px; align-items: stretch; }
 .usage-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
@@ -69,6 +69,9 @@ svg text { fill: var(--foreground); font: 11px system-ui, sans-serif; }
 .usage-periods button { padding: 8px 12px; border-radius: 0; font-size: 12px; }
 .usage-periods button:first-child { border-radius: 6px 0 0 6px; }
 .usage-periods button:last-child { border-radius: 0 6px 6px 0; border-left: 0; }
+.periods.usage-periods { grid-template-columns: repeat(5, minmax(40px, 1fr)); width: max-content; max-width: 100%; }
+.periods button { white-space: nowrap; padding-inline: 8px; }
+.periods button + button { border-left: 0; }
 .usage-toolbar select { min-width: 0; font-size: 12px; }
 .usage-date-navigation { display: flex; align-items: center; gap: 4px; padding: 8px; border: 1px solid color-mix(in srgb, var(--foreground) 15%, transparent); border-radius: 8px; }
 .usage-date-navigation .history-range { margin: 0 auto 0 0; }
@@ -78,7 +81,7 @@ svg text { fill: var(--foreground); font: 11px system-ui, sans-serif; }
 .usage-nav-previous { transform: rotate(135deg); }
 .usage-controls label { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 12px; }
 .usage-controls select { min-height: 40px; padding: 6px; max-width: 100%; color: var(--foreground); background: var(--background); border: 1px solid color-mix(in srgb, var(--foreground) 25%, transparent); border-radius: 6px; font: inherit; }
-.usage-chart { max-height: 220px; }
+.usage-chart { height: 220px; max-height: 220px; }
 .usage-day-details { margin: 12px 0; white-space: pre-line; }
 .usage-chart [role="button"] { cursor: pointer; }
 .usage-chart [role="button"]:focus-visible { outline: 2px solid var(--accent); }

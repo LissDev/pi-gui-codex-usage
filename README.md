@@ -56,6 +56,9 @@ quota meters, supplied account details and Usage limit resets, and **Analytics**
 Messages, Token breakdown, Plugins, Skills, Top chats, all-time metrics,
 invocation details and daily, cumulative and weekly charts with calendar heatmaps. Close it
 with the native workbench control; Hide affects compact only. A mounted report
+fits all chart plots to the pane width with bounded height and unscaled labels.
+Resizing preserves selections, focus and reading positions as viewport bounds allow,
+without fetching data. The report
 refreshes on entry and every three minutes. Closing/disposal stops its frontend
 polling; an already accepted finite backend request may finish within 25 seconds.
 Opening, refreshing or closing details never enables compact. Reopening the
@@ -250,6 +253,8 @@ All uses each series' earliest and latest supplied dates.
 Lifetime statistics and top invocations remain explicitly **all time**.
 The period survives tab changes and live updates, and resets to Year when
 the report is reopened.
+The common period controls form one compact joined row above Daily, matching
+Usage history's segments while retaining all five options in narrow panes.
 
 Daily and cumulative heatmaps show the entire selected calendar window in seven
 weekday rows and week columns, with fixed weekday labels and aligned month names.

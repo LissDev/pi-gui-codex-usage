@@ -1982,3 +1982,172 @@ test('top chats: source freshness remains distinct from fetch time and unknown s
     assert.equal(await region.getByText('Updated: 2026.10.27 20:00', { exact: true }).count(), 1, 'Unknown source freshness does not hide known fetch time');
   }
 });
+
+async function resizeReport(page, width) {
+  await page.setViewportSize({ width, height: 900 });
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+}
+
+async function responsivePlotFailures(chart, label, maximumHeight) {
+  const geometry = await chart.evaluate(svg => {
+    const box = svg.getBoundingClientRect();
+    const card = svg.parentElement;
+    const cardStyle = getComputedStyle(card);
+    const available = card.clientWidth - parseFloat(cardStyle.paddingLeft) - parseFloat(cardStyle.paddingRight);
+    const lines = [...svg.querySelectorAll('.grid-line')].map(line => {
+      const matrix = line.getScreenCTM();
+      const start = new DOMPoint(Number(line.getAttribute('x1')), Number(line.getAttribute('y1'))).matrixTransform(matrix);
+      const end = new DOMPoint(Number(line.getAttribute('x2')), Number(line.getAttribute('y2'))).matrixTransform(matrix);
+      return { left: start.x - box.left, right: box.right - end.x, width: end.x - start.x };
+    });
+    const labels = [...svg.querySelectorAll('text')].map(text => {
+      const matrix = text.getScreenCTM();
+      const xScale = Math.hypot(matrix.a, matrix.b), yScale = Math.hypot(matrix.c, matrix.d);
+      return { text: text.textContent, font: parseFloat(getComputedStyle(text).fontSize) * yScale, ratio: xScale / yScale };
+    });
+    return { width: box.width, available, height: box.height, lines, labels };
+  });
+  assert.ok(geometry.lines.length >= 3 && geometry.labels.length >= 3, `${label}: supplied fixture renders a real plot and labels`);
+  const failures = [];
+  if (Math.abs(geometry.width - geometry.available) > 2) failures.push(`${label}: SVG width ${geometry.width}px does not fill ${geometry.available}px card content`);
+  for (const line of geometry.lines) if (line.left < 0 || line.left > 64 || line.right < -1 || line.right > 24 || line.width < geometry.width - 88) {
+    failures.push(`${label}: plot ${line.width.toFixed(1)}px in ${geometry.width.toFixed(1)}px SVG, left/right inset ${line.left.toFixed(1)}/${line.right.toFixed(1)}px`);
+    break;
+  }
+  if (geometry.height > maximumHeight + 1) failures.push(`${label}: height ${geometry.height}px exceeds ${maximumHeight}px`);
+  for (const text of geometry.labels) if (text.font < 9 || text.font > 13 || Math.abs(text.ratio - 1) > .05) {
+    failures.push(`${label}: label ${text.text} has projected font ${text.font.toFixed(1)}px and horizontal/vertical scale ratio ${text.ratio.toFixed(2)}`);
+    break;
+  }
+  return failures;
+}
+
+test('responsive: all account-source plots fill the same mounted card after narrow and wide resizes with readable labels', async t => {
+  const page = await pageFor(t, tokensSnapshot());
+  await historyRegion(page);
+  const failures = [];
+  for (const width of [320, 439, 800, 1280, 439]) {
+    await resizeReport(page, width);
+    for (const title of ['Usage history', 'Messages', 'Token breakdown', 'Plugins', 'Skills']) {
+      const chart = page.getByRole('region', { name: title, exact: true }).locator('svg.usage-chart');
+      assert.equal(await chart.count(), 1, `${title} has its own plot`);
+      failures.push(...await responsivePlotFailures(chart, `${width}px ${title}`, 220));
+      assert.ok((await chart.locator('text').allTextContents()).some(text => /^10\.\d\d$/.test(text)), 'Date labels retain MM.DD format');
+    }
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${width}px report has no outer horizontal overflow`);
+  }
+  assert.deepEqual(failures, [], 'Actual transformed plot bounds must follow card width without stretching text or height');
+});
+
+test('responsive: Daily Cumulative and Weekly plots fill available width while Year calendars keep square cells and complete dates', async t => {
+  const page = await pageFor(t, refinementSnapshot());
+  await page.getByRole('tab', { name: 'Analytics', exact: true }).click();
+  const failures = [];
+  for (const width of [320, 439, 800, 1280, 320]) {
+    await resizeReport(page, width);
+    assert.equal(await period(page, 'Year').getAttribute('aria-pressed'), 'true');
+    for (const title of ['Daily', 'Cumulative', 'Weekly']) {
+      const section = historySection(page, title);
+      failures.push(...await responsivePlotFailures(section.locator('svg'), `${width}px ${title}`, 160));
+      const cell = datedCell(section, '2026.10.26');
+      const box = await cell.boundingBox();
+      assert.ok(Math.abs(box.width - box.height) < .1 && box.width >= 24 && box.width <= 25, `${title}: calendar cells remain square, unscaled targets`);
+      if (title !== 'Weekly') assert.equal((await calendarDates(section)).length, 365, 'Resize retains all Year calendar dates');
+      if (width === 320) assert.ok(await section.locator('.heatmap-scroll').evaluate(node => node.scrollWidth > node.clientWidth), 'Narrow calendar retains horizontal coverage');
+    }
+  }
+  assert.deepEqual(failures, [], 'Profile SVG plot geometry responds independently of the square calendar grid');
+});
+
+test('responsive: common Daily periods are compact joined segments matching Usage history and filter every profile chart', async t => {
+  const next = refinementSnapshot();
+  const page = await pageFor(t, { ...tokensSnapshot(), analytics: next.analytics });
+  await historyRegion(page);
+  const group = page.getByRole('group', { name: 'History period', exact: true });
+  const names = ['7 days', '30 days', '90 days', 'Year', 'All'];
+  assert.deepEqual(await group.getByRole('button').allTextContents(), names);
+  assert.equal(await period(page, 'Year').getAttribute('aria-pressed'), 'true');
+  const failures = [];
+  for (const width of [320, 439, 800, 1280]) {
+    await resizeReport(page, width);
+    const reference = await page.getByRole('region', { name: 'Usage history', exact: true }).getByRole('button', { name: '7 days', exact: true }).evaluate(node => {
+      const style = getComputedStyle(node); return { font: style.fontSize, height: node.getBoundingClientRect().height };
+    });
+    const buttons = await group.getByRole('button').evaluateAll(nodes => nodes.map(node => {
+      const box = node.getBoundingClientRect(), style = getComputedStyle(node);
+      return { x: box.x, y: box.y, right: box.right, width: box.width, height: box.height, font: style.fontSize, leftRadius: parseFloat(style.borderTopLeftRadius), rightRadius: parseFloat(style.borderTopRightRadius) };
+    }));
+    if (!buttons.every(button => button.height >= 40 && Math.abs(button.height - reference.height) <= 1 && button.font === reference.font && button.width >= 40 && button.width <= 85)) failures.push(`${width}px: common period sizing/font differs from compact Usage history segments`);
+    if (!buttons.every((button, index) => !index || Math.abs(button.y - buttons[0].y) <= 1 && Math.abs(button.x - buttons[index - 1].right) <= 1)) failures.push(`${width}px: five periods do not form one joined row`);
+    if (buttons.slice(1, -1).some(button => button.leftRadius || button.rightRadius)) failures.push(`${width}px: interior segments have rounded separated edges`);
+    assert.ok(buttons.every(button => button.x >= 0 && button.right <= width), 'Every accessible period target fits within the viewport');
+  }
+  const independent = await page.evaluate(() => ({ history: window.probe.historyCalls, messages: window.probe.messagesCalls, plugins: window.probe.pluginsCalls, skills: window.probe.skillsCalls }));
+  for (const [index, name] of names.entries()) {
+    const button = period(page, name);
+    await button.focus();
+    await page.keyboard.press('Enter');
+    assert.equal(await button.getAttribute('aria-pressed'), 'true');
+    assert.equal(await button.evaluate(node => node === document.activeElement), true, 'Keyboard selection retains focus');
+    const days = [7, 30, 90, 365, null][index];
+    const start = days ? new Date(Date.parse('2026-10-27T00:00:00Z') - (days - 1) * 86400000).toISOString().slice(0, 10) : null;
+    for (const [title, key] of [['Daily', 'daily'], ['Cumulative', 'cumulative'], ['Weekly', 'weekly']]) {
+      const section = historySection(page, title);
+      const expected = next.analytics[key].filter(bucket => (!start || bucket.date >= start && bucket.date <= '2026-10-27') && bucket.tokens != null);
+      assert.equal(await section.locator('svg .data-point').count(), expected.length, `${title} SVG follows ${name}`);
+      for (const bucket of expected) assert.equal(await datedCell(section, bucket.date.replaceAll('-', '.')).count(), 1, `${title} calendar agrees with ${name} SVG`);
+      if (days && title !== 'Weekly') assert.equal((await calendarDates(section)).length, days);
+    }
+  }
+  assert.deepEqual(await page.evaluate(() => ({ history: window.probe.historyCalls, messages: window.probe.messagesCalls, plugins: window.probe.pluginsCalls, skills: window.probe.skillsCalls })), independent, 'Common profile periods do not request or change independent card ranges');
+  assert.deepEqual(failures, [], 'Daily periods must visually behave as the existing compact segmented controls');
+});
+
+test('responsive: resizing retains selected days groups focus exact values chat expansion and positive reading offsets without requests', async t => {
+  const next = topChatsSnapshot();
+  next.analytics = refinementSnapshot().analytics;
+  const page = await pageFor(t, next);
+  await resizeReport(page, 320);
+  const chats = await topChatsRegion(page);
+  const history = page.getByRole('region', { name: 'Usage history', exact: true });
+  const messages = page.getByRole('region', { name: 'Messages', exact: true });
+  await history.getByRole('combobox', { name: 'Group by', exact: true }).selectOption({ label: 'By model' });
+  await history.getByRole('combobox', { name: 'Day details', exact: true }).selectOption({ label: '2026.10.26' });
+  await messages.getByRole('combobox', { name: 'Day details', exact: true }).selectOption({ label: '2026.10.26' });
+  await chats.getByRole('button', { name: 'Show more', exact: true }).click();
+  await topChatToggle(chats, 2).click();
+  const table = chats.getByRole('group', { name: 'Chat usage table', exact: true });
+  assert.ok(await table.evaluate(node => { node.scrollLeft = 24; return node.scrollLeft > 0; }), 'Table starts at a positive reading offset');
+  const calendar = historySection(page, 'Daily').locator('.heatmap-scroll');
+  assert.ok(await calendar.evaluate(node => { node.scrollLeft = 120; return node.scrollLeft > 0; }), 'Year calendar starts at a positive reading offset');
+  const dropdown = history.getByRole('combobox', { name: 'Day details', exact: true });
+  await dropdown.focus();
+  await page.evaluate(() => window.scrollTo(0, 400));
+  const before = await page.evaluate(() => ({ calls: window.probe.calls, history: window.probe.historyCalls, messages: window.probe.messagesCalls, plugins: window.probe.pluginsCalls, skills: window.probe.skillsCalls }));
+  const requests = [];
+  page.on('request', request => requests.push(request.url()));
+  let lastTable = 24, lastCalendar = 120;
+  for (const width of [439, 800, 1280, 320]) {
+    await resizeReport(page, width);
+    assert.equal(await dropdown.evaluate(node => node === document.activeElement), true, 'Resize retains dropdown focus');
+    assert.equal(await dropdown.locator('option:checked').innerText(), '2026.10.26');
+    assert.equal(await messages.getByRole('combobox', { name: 'Day details', exact: true }).locator('option:checked').innerText(), '2026.10.26');
+    assert.equal(await history.getByRole('combobox', { name: 'Group by', exact: true }).locator('option:checked').innerText(), 'By model');
+    assert.equal(await period(page, 'Year').getAttribute('aria-pressed'), 'true');
+    assert.equal(await topChatRows(chats).count(), 10);
+    assert.equal(await topChatToggle(chats, 2).getAttribute('aria-expanded'), 'true');
+    for (const [locator, previous, label] of [[table, lastTable, 'table'], [calendar, lastCalendar, 'calendar']]) {
+      const offset = await locator.evaluate(node => ({ left: node.scrollLeft, maximum: node.scrollWidth - node.clientWidth }));
+      assert.ok(Math.abs(offset.left - Math.min(previous, offset.maximum)) <= 1, `${label} retains reading offset subject to native clamp`);
+      if (label === 'table') lastTable = offset.left; else lastCalendar = offset.left;
+    }
+    assert.ok(await page.evaluate(() => window.scrollY > 0), 'Resize does not reset report reading position to top');
+    assert.deepEqual(await history.locator('svg text[text-anchor="end"]').allTextContents(), ['0%', '25%', '50%', '75%', '100%']);
+  }
+  assert.deepEqual(await page.evaluate(() => ({ calls: window.probe.calls, history: window.probe.historyCalls, messages: window.probe.messagesCalls, plugins: window.probe.pluginsCalls, skills: window.probe.skillsCalls })), before);
+  assert.deepEqual(requests, [], 'Resize sends no additional HTTP requests');
+  await history.getByRole('button', { name: /2026\.10\.26/ }).focus();
+  assert.match(await history.getByRole('tooltip').innerText(), /2026\.10\.26[\s\S]*10%/);
+  await datedCell(historySection(page, 'Daily'), '2026.10.26').focus();
+  assert.match(exactTokenText(await historySection(page, 'Daily').getByRole('tooltip').innerText()), /2026\.10\.26[\s\S]*2000/);
+});
