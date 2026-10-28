@@ -39,36 +39,24 @@ const usageAmount = (value, units) => `${value}${units === 'percent' ? '%' : ' c
 function chartControls(prefix, view, groupOptions, changeRange, changeGrouping, changeDay) {
   const { range: selection, days, grouping } = view;
   const controls = element('div', null, 'usage-controls');
+  const toolbar = element('div', null, 'usage-toolbar');
+  const periods = element('div', null, 'usage-periods');
   for (const duration of changeRange ? [7, 30] : []) {
-    const button = element('button', `${duration} days`);
+    const button = element('button', `${duration}d`);
     button.type = 'button';
     button.dataset.control = `${prefix}-${duration}`;
+    button.setAttribute('aria-label', `${duration} days`);
     button.setAttribute('aria-pressed', String(days === duration));
     button.onclick = () => {
       const range = periodBounds(duration);
       void changeRange({ startDate: range.start, endDate: range.end }, duration);
     };
-    controls.append(button);
+    periods.append(button);
   }
-  for (const [name, direction] of changeRange ? [['Previous', -1], ['Next', 1]] : []) {
-    const button = element('button', name);
-    button.type = 'button';
-    button.dataset.control = `${prefix}-${name}`;
-    button.disabled = direction === 1 && selection.endDate >= dayKey(new Date());
-    button.onclick = () => {
-      const shift = key => {
-        const date = new Date(`${key}T12:00:00`);
-        date.setDate(date.getDate() + days * direction);
-        return dayKey(date);
-      };
-      const endDate = shift(selection.endDate);
-      if (endDate <= dayKey(new Date())) void changeRange({ startDate: shift(selection.startDate), endDate }, days);
-    };
-    controls.append(button);
-  }
+  if (changeRange) toolbar.append(periods);
   if (groupOptions.length) {
-    const label = element('label', 'Group by');
     const select = element('select');
+    select.setAttribute('aria-label', 'Group by');
     select.dataset.control = `${prefix}-group`;
     for (const [name, field] of groupOptions) {
       const option = element('option', name);
@@ -77,8 +65,33 @@ function chartControls(prefix, view, groupOptions, changeRange, changeGrouping, 
       select.append(option);
     }
     select.onchange = () => changeGrouping(select.value);
-    label.append(select);
-    controls.append(label);
+    toolbar.append(select);
+  }
+  if (toolbar.childElementCount) controls.append(toolbar);
+  if (changeRange) {
+    const navigation = element('div', null, 'usage-date-navigation');
+    navigation.append(element('p', `${calendarDate(selection.startDate)} – ${calendarDate(selection.endDate)}`, 'history-range'));
+    for (const [name, direction] of [['Previous', -1], ['Next', 1]]) {
+      const button = element('button', null, 'usage-date-button');
+      button.type = 'button';
+      button.setAttribute('aria-label', name);
+      button.dataset.control = `${prefix}-${name}`;
+      const icon = element('span', null, `usage-nav-icon${direction === -1 ? ' usage-nav-previous' : ''}`);
+      icon.setAttribute('aria-hidden', 'true');
+      button.append(icon);
+      button.disabled = direction === 1 && selection.endDate >= dayKey(new Date());
+      button.onclick = () => {
+        const shift = key => {
+          const date = new Date(`${key}T12:00:00`);
+          date.setDate(date.getDate() + days * direction);
+          return dayKey(date);
+        };
+        const endDate = shift(selection.endDate);
+        if (endDate <= dayKey(new Date())) void changeRange({ startDate: shift(selection.startDate), endDate }, days);
+      };
+      navigation.append(button);
+    }
+    controls.append(navigation);
   }
   const dayLabel = element('label', 'Day details');
   const daySelect = element('select');
@@ -126,7 +139,7 @@ function usageHistory(report, view, changeRange, changeGrouping, changeDay) {
   region.setAttribute('aria-label', 'Usage history');
   region.append(element('h2', 'Usage history'));
   const { controls, daySelect } = chartControls('usage', view, [['By feature', 'thread_source'], ['By model', 'model'], ['By surface', 'surface'], ['By turn start', 'turn_trigger']], changeRange, changeGrouping, changeDay);
-  region.append(controls, element('p', `${calendarDate(selection.startDate)} – ${calendarDate(selection.endDate)}`, 'history-range'));
+  region.append(controls);
   const matching = report.startDate === selection.startDate && report.endDate === selection.endDate;
   if (loading || !matching) {
     region.append(element('p', 'Loading usage history…', 'freshness'));
@@ -168,8 +181,8 @@ function usageHistory(report, view, changeRange, changeGrouping, changeDay) {
   tooltip.id = 'usage-history-tooltip';
   tooltip.setAttribute('role', 'tooltip');
   tooltip.hidden = true;
-  const maximum = Math.max(...data.map(day => day.total), 1);
-  for (const fraction of [0, .5, 1]) {
+  const maximum = report.units === 'percent' ? 100 : Math.max(...data.map(day => day.total), 1);
+  for (const fraction of report.units === 'percent' ? [0, .25, .5, .75, 1] : [0, .5, 1]) {
     const y = 175 - fraction * 145;
     svgShape(svg, 'line', { x1: 36, x2: 348, y1: y, y2: y, class: 'grid-line' });
     svgShape(svg, 'text', { x: 30, y: y + 4, 'text-anchor': 'end' }, `${maximum * fraction}${report.units === 'percent' ? '%' : ''}`);
@@ -184,7 +197,7 @@ function usageHistory(report, view, changeRange, changeGrouping, changeDay) {
     svgShape(bar, 'rect', { x, y: 25, width: bin * .7, height: 155, fill: 'transparent' });
     let accumulated = 0;
     for (const [key, value] of day.groups) {
-      const height = value / maximum * 145;
+      const height = Math.min(value / maximum * 145, Math.max(0, 145 - accumulated));
       svgShape(bar, 'rect', { x, y: 175 - accumulated - height, width: bin * .7, height, fill: color(key) });
       accumulated += height;
     }
@@ -216,6 +229,8 @@ function usageHistory(report, view, changeRange, changeGrouping, changeDay) {
     legend.append(item);
   }
   const incomplete = report.data.some(day => day.date >= selection.startDate && day.date <= selection.endDate && day.attribution.some(row => row.value == null));
+  const overflow = report.units === 'percent' ? data.filter(day => day.total > 100) : [];
+  if (overflow.length) region.append(element('p', `Above 100% plot range: ${overflow.map(day => `${calendarDate(day.date)} (${usageAmount(day.total, report.units)})`).join(', ')}. Bars stop at 100%; Day details keeps exact amounts.`, 'freshness'));
   region.append(svg, tooltip, element('p', incomplete ? 'Share of known selected usage' : 'Share of selected usage', 'freshness'), legend);
   return region;
 }
@@ -271,7 +286,7 @@ function countChart(title, report, view, changeRange, changeGrouping, changeDay)
   region.setAttribute('aria-label', title);
   region.append(element('h2', title));
   const { controls, daySelect } = chartControls(title.toLowerCase(), view, tools ? [] : [['By model', 'models'], ['By surface', 'clients']], changeRange, changeGrouping, changeDay);
-  region.append(controls, element('p', `${calendarDate(view.range.startDate)} – ${calendarDate(view.range.endDate)}`, 'history-range'));
+  region.append(controls);
   if (view.loading || report.startDate !== view.range.startDate || report.endDate !== view.range.endDate) {
     region.append(element('p', `Loading ${title.toLowerCase()}…`, 'freshness'));
     return region;
@@ -781,6 +796,8 @@ export async function mount(root, host) {
   let tokenScroll;
 
   function render(resetScroll = false) {
+    const reportX = window.scrollX;
+    const reportY = window.scrollY;
     const tokenClients = panel.querySelector('.token-clients');
     if (tokenClients) tokenScroll = { day: tokenClients.dataset.day, left: tokenClients.scrollLeft };
     const focusedUsage = panel.querySelector('.usage-controls :focus, .token-detail:focus, .token-clients:focus')?.dataset.control;
@@ -874,6 +891,7 @@ export async function mount(root, host) {
       if (focusedUsage) panel.querySelector(`[data-control="${focusedUsage}"]`)?.focus({ preventScroll: true });
     }
     if (focusedReset) panel.querySelector(`#${focusedReset}`)?.focus({ preventScroll: true });
+    window.scrollTo(reportX, reportY);
   }
 
   tabs.forEach((tab, index) => {

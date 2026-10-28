@@ -63,7 +63,19 @@ svg text { fill: var(--foreground); font: 11px system-ui, sans-serif; }
 .data-point { fill: var(--accent); }
 .periods { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 24px; }
 .usage-history { position: relative; margin-bottom: 28px; }
-.usage-controls { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.usage-controls { display: flex; flex-direction: column; gap: 12px; align-items: stretch; }
+.usage-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.usage-periods { display: grid; grid-template-columns: repeat(2, minmax(40px, 1fr)); flex-shrink: 0; }
+.usage-periods button { padding: 8px 12px; border-radius: 0; font-size: 12px; }
+.usage-periods button:first-child { border-radius: 6px 0 0 6px; }
+.usage-periods button:last-child { border-radius: 0 6px 6px 0; border-left: 0; }
+.usage-toolbar select { min-width: 0; font-size: 12px; }
+.usage-date-navigation { display: flex; align-items: center; gap: 4px; padding: 8px; border: 1px solid color-mix(in srgb, var(--foreground) 15%, transparent); border-radius: 8px; }
+.usage-date-navigation .history-range { margin: 0 auto 0 0; }
+.usage-date-button { display: flex; align-items: center; justify-content: center; flex: 0 0 40px; width: 40px; padding: 0; border-color: transparent; }
+.usage-date-button:disabled { opacity: .4; cursor: default; }
+.usage-nav-icon { width: 8px; height: 8px; border: solid currentColor; border-width: 0 1.5px 1.5px 0; transform: rotate(-45deg); }
+.usage-nav-previous { transform: rotate(135deg); }
 .usage-controls label { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 12px; }
 .usage-controls select { min-height: 40px; padding: 6px; max-width: 100%; color: var(--foreground); background: var(--background); border: 1px solid color-mix(in srgb, var(--foreground) 25%, transparent); border-radius: 6px; font: inherit; }
 .usage-chart { max-height: 220px; }

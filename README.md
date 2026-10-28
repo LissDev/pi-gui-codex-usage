@@ -106,11 +106,19 @@ days. **Previous / Next** move a whole window; Next stops at today. Changing the
 duration resets to the latest window. **Group by** selects feature, model, surface
 or turn start using the same source attribution. These selections survive tab
 changes and live updates; reopening resets to seven days, latest, By feature.
+The compact **7d / 30d** segments and grouping share one toolbar row; the date
+range and labelled arrow buttons occupy a separate row. Controls retain 40px
+targets in narrow panes. Inline selections and live updates preserve the report's
+scroll position and focused reader, as the available content height allows.
 
 Stacked bars use the source's **percent** or **credits** units. Hover, focus or
 touch a dated bar for exact daily amounts and group values, including tiny
 positive amounts and explicit zero. Missing values stay unknown; mixed days show
 a known subtotal, and legend shares identify the known selected usage denominator.
+Percent charts use a fixed 0–100% axis with 25% ticks; credits scale to their
+supplied amounts. Axis formatting does not round or normalize source values.
+Days above 100% are named above the chart with their actual totals. Their bars
+stop at 100%; tooltips and Day details retain every exact source amount.
 These amounts do not represent token totals or a weekly quota percentage.
 
 The source currently supplies no freshness timestamp, so **Data as of** says

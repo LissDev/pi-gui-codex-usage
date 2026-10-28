@@ -139,6 +139,165 @@ async function tokensRegion(page) {
   return region;
 }
 
+test('polish: percent history has fixed quarter ticks while credits and exact source amounts remain independent', async t => {
+  const next = historySnapshot();
+  next.history.units = 'credits';
+  next.history.data = [{ date: '2026-10-26', attribution: [{ thread_source: 'user', value: 240 }] }];
+  const page = await pageFor(t, next);
+  const region = await historyRegion(page);
+  const axis = () => region.locator('svg text[text-anchor="end"]').allTextContents();
+  assert.ok((await axis()).includes('240'), 'Credits retain their source-dependent scale above 100');
+  await region.getByRole('button', { name: /2026\.10\.26/ }).focus();
+  assert.match(await region.getByRole('tooltip').innerText(), /240 credits/);
+  next.history.units = 'percent';
+  for (const value of [99.99999, 10]) {
+    next.history.data[0].attribution[0].value = value;
+    await page.evaluate(state => window.probe.publish(state), next);
+    assert.deepEqual(await axis(), ['0%', '25%', '50%', '75%', '100%'], 'Percent scale stays fixed with readable quarter ticks regardless of the daily maximum');
+    await region.getByRole('button', { name: /2026\.10\.26/ }).focus();
+    assert.match(await region.getByRole('tooltip').innerText(), new RegExp(`${String(value).replace('.', '\\.')}%`), 'Axis formatting never changes the actual usage amount');
+  }
+});
+
+test('polish: summed percent history above 100 stays bounded and visibly marks overflow without losing source amounts', async t => {
+  const next = historySnapshot();
+  next.history.data = [{ date: '2026-10-26', attribution: [
+    { thread_source: 'user', value: 80 }, { thread_source: 'subagent', value: 70 },
+  ] }];
+  const page = await pageFor(t, next);
+  const region = await historyRegion(page);
+  const chart = region.locator('svg.usage-chart');
+  assert.deepEqual(await chart.locator('text[text-anchor="end"]').allTextContents(), ['0%', '25%', '50%', '75%', '100%']);
+  const marked = await region.evaluate(node => [...node.querySelectorAll('*')].some(item => {
+    if (item.closest('title, [role="tooltip"], .usage-day-details')) return false;
+    const ownText = [...item.childNodes].filter(child => child.nodeType === Node.TEXT_NODE).map(child => child.textContent).join('');
+    const overflow = /exceed|overflow|above\s*100|over\s*100|>\s*100/i;
+    const visibleMarker = ownText.trim() || ['path', 'polygon', 'polyline', 'line', 'circle', 'use'].includes(item.localName);
+    const described = overflow.test(ownText) || (visibleMarker && overflow.test(item.getAttribute('aria-label') ?? ''));
+    const box = item.getBoundingClientRect();
+    const style = getComputedStyle(item);
+    return described && box.width > 0 && box.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && Number(style.opacity) > 0;
+  }));
+  const geometry = await chart.evaluate(svg => {
+    const ticks = [...svg.querySelectorAll('line')].filter(line => line.getAttribute('y1') === line.getAttribute('y2')).map(line => Number(line.getAttribute('y1')));
+    const bars = [...svg.querySelectorAll('[role="button"] rect')].filter(rect => rect.getAttribute('fill') !== 'transparent').map(rect => { const box = rect.getBBox(); return { top: box.y, bottom: box.y + box.height }; });
+    return { top: Math.min(...ticks), bottom: Math.max(...ticks), bars };
+  });
+  assert.ok(geometry.bars.length >= 2, 'Both supplied attribution groups are represented');
+  await region.getByRole('combobox', { name: 'Day details', exact: true }).selectOption({ label: '2026.10.26' });
+  const details = await region.getByRole('region', { name: 'Day details', exact: true }).innerText();
+  assert.match(details, /2026\.10\.26[^\n]*150%/, 'Summed source total remains exact above the fixed axis');
+  assert.match(details, /Chats:\s*80%/);
+  assert.match(details, /Subagents:\s*70%/);
+  const failures = [];
+  if (!marked) failures.push('The affected day has no visible overflow notice or labelled marker before opening details');
+  if (!geometry.bars.every(bar => bar.top >= geometry.top - .01 && bar.bottom <= geometry.bottom + .01)) failures.push(`Stacked bar escapes the fixed 0–100 plot: ${JSON.stringify(geometry)}`);
+  assert.deepEqual(failures, [], 'Above-axis usage must be bounded and clearly marked rather than silently clipped');
+});
+
+test('polish: both chart period segments have equal widths and at least 40px targets at narrow sizes', async t => {
+  const failures = [];
+  for (const width of [439, 320]) {
+    const page = await pageFor(t, messagesSnapshot(), 'Europe/Moscow', { viewport: { width, height: 900 } });
+    await historyRegion(page);
+    for (const title of ['Usage history', 'Messages']) {
+      const region = page.getByRole('region', { name: title, exact: true });
+      const [seven, thirty] = await Promise.all(['7 days', '30 days'].map(name => region.getByRole('button', { name, exact: true }).boundingBox()));
+      assert.ok(seven && thirty, `${width}px ${title}: both period segments are visible`);
+      if (seven.width < 40 || thirty.width < 40 || Math.abs(seven.width - thirty.width) > 1) failures.push(`${width}px ${title}: period widths ${seven.width}/${thirty.width}; expected equal widths >=40px`);
+      assert.ok(seven.height >= 40 && thirty.height >= 40, 'Existing period target heights remain at least 40px');
+    }
+  }
+  assert.deepEqual(failures, [], 'Period segments remain uniform and easy to target at both narrow report widths');
+});
+
+for (const width of [439, 320]) test(`polish: History and Messages controls have aligned period/group and separate compact date navigation at ${width}px`, async t => {
+  const page = await pageFor(t, messagesSnapshot(), 'Europe/Moscow', { viewport: { width, height: 900 } });
+  await historyRegion(page);
+  const failures = [];
+  for (const title of ['Usage history', 'Messages']) {
+    const region = page.getByRole('region', { name: title, exact: true });
+    const seven = region.getByRole('button', { name: '7 days', exact: true });
+    const thirty = region.getByRole('button', { name: '30 days', exact: true });
+    const grouping = region.getByRole('combobox', { name: 'Group by', exact: true });
+    const previous = region.getByRole('button', { name: 'Previous', exact: true });
+    const next = region.getByRole('button', { name: 'Next', exact: true });
+    const range = region.getByText('2026.10.21 – 2026.10.27', { exact: true });
+    const [a, b, g, p, n, r] = await Promise.all([seven, thirty, grouping, previous, next, range].map(control => control.boundingBox()));
+    assert.ok([a, b, g, p, n, r].every(Boolean), `${title} has visible date and toolbar controls`);
+    for (const [condition, message] of [
+      [Math.abs(a.y - b.y) <= 1 && Math.abs(a.y - g.y) <= 1, 'period buttons and grouping share one row'],
+      [Math.abs(a.height - g.height) <= 1 && [a, b, g, p, n].every(box => box.height >= 40), 'equal toolbar height and existing 40px targets'],
+      [b.x - (a.x + a.width) <= 2 && g.x >= b.x + b.width, 'period segments stay together left and grouping follows right'],
+      [p.y >= a.y + a.height && Math.abs(p.y - n.y) <= 1 && Math.abs(r.y + r.height / 2 - (p.y + p.height / 2)) <= 2 && r.x + r.width <= p.x, 'date and previous/next occupy their own aligned row'],
+      [p.width <= 44 && n.width <= 44, 'labelled navigation uses compact icon targets'],
+    ]) if (!condition) failures.push(`${title}: ${message}`);
+    await previous.focus();
+    await page.keyboard.press('Tab');
+    assert.ok(await region.evaluate(node => node.contains(document.activeElement) && getComputedStyle(document.activeElement).outlineStyle !== 'none'), `${title}: keyboard navigation retains a visible focus indicator`);
+  }
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'Narrow report has no horizontal page overflow');
+  assert.deepEqual(failures, [], 'Both chart toolbars remain compact and organized at this panel width');
+});
+
+test('polish: selections preserve the outer report position and focused card across all Analytics readers', async t => {
+  const page = await pageFor(t, tokensSnapshot(), 'Europe/Moscow', { viewport: { width: 439, height: 400 } });
+  await historyRegion(page);
+  const failures = [];
+  for (const [title, label, option] of [
+    ['Usage history', 'Group by', 'By model'], ['Usage history', 'Day details', '2026.10.26'],
+    ['Messages', 'Group by', 'By surface'], ['Messages', 'Day details', '2026.10.26'],
+    ['Token breakdown', 'Day details', '2026.10.26'], ['Plugins', 'Day details', '2026.10.26'], ['Skills', 'Day details', '2026.10.26'],
+  ]) {
+    const control = page.getByRole('region', { name: title, exact: true }).getByRole('combobox', { name: label, exact: true });
+    await control.focus();
+    assert.ok(await control.evaluate(node => node === document.activeElement), `${title}/${label} has actual native-select focus before changing`);
+    await control.evaluate(node => window.scrollTo(0, window.scrollY + node.getBoundingClientRect().top - 32));
+    const before = await page.evaluate(() => window.scrollY);
+    assert.ok(before > 0, `${title}/${label} starts at a real nonzero outer reading position`);
+    const index = await control.locator('option').evaluateAll((nodes, label) => nodes.findIndex(node => node.textContent === label), option);
+    assert.ok(index >= 0, 'Requested option is supplied by the source fixture');
+    await page.keyboard.press('Home');
+    for (let step = 0; step < index; step++) await page.keyboard.press('ArrowDown');
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const after = await page.evaluate(() => window.scrollY);
+    const box = await control.boundingBox();
+    if (Math.abs(after - before) > 2 || !box || box.y < 0 || box.y + box.height > 400) failures.push(`${title}/${label}: outer scroll ${before} -> ${after}, control y=${box?.y}`);
+    assert.ok(await control.evaluate(node => node === document.activeElement), `${title}/${label} focus survives rerender`);
+    assert.equal(await control.locator('option:checked').innerText(), option, 'The selected value is actually rendered');
+  }
+  assert.deepEqual(failures, [], 'Changing an inline select preserves its outer report reading position and visible control');
+});
+
+test('polish: late snapshots and range updates preserve a selected lower card outer reading position', async t => {
+  const page = await pageFor(t, tokensSnapshot(), 'Europe/Moscow', { viewport: { width: 439, height: 400 } });
+  const region = await tokensRegion(page);
+  const day = region.getByRole('combobox', { name: 'Day details', exact: true });
+  await day.selectOption({ label: '2026.10.26' });
+  await day.focus();
+  await day.evaluate(node => window.scrollTo(0, window.scrollY + node.getBoundingClientRect().top - 32));
+  const before = await page.evaluate(() => window.scrollY);
+  assert.ok(before > 0, 'Selected lower card starts below the top of the long report');
+  await page.evaluate(() => {
+    const next = window.probe.snapshot();
+    next.messages.updatedAt += 60000;
+    next.messages.data[0].totals.text_total_tokens = 9000012;
+    window.probe.publish(next);
+  });
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  assert.match(exactTokenText(await region.innerText()), /9000012/, 'Late source values are rendered');
+  assert.ok(Math.abs(await page.evaluate(() => window.scrollY) - before) <= 2, 'Late snapshot preserves the outer document position after a select');
+  assert.ok(await day.evaluate(node => node === document.activeElement), 'Late snapshot restores selected-reader focus');
+  const messages = page.getByRole('region', { name: 'Messages', exact: true });
+  const previous = messages.getByRole('button', { name: 'Previous', exact: true });
+  await previous.focus();
+  await previous.evaluate(node => window.scrollTo(0, window.scrollY + node.getBoundingClientRect().top - 32));
+  const rangeBefore = await page.evaluate(() => window.scrollY);
+  await previous.click();
+  assert.match(await messages.innerText(), /2026\.10\.14[\s\S]*2026\.10\.20/);
+  assert.ok(Math.abs(await page.evaluate(() => window.scrollY) - rangeBefore) <= 2, 'Range completion preserves the report position through loading and live source rerenders');
+});
+
 test('tokens: four daily series keep large axes readable and exact totals/client details independent with mismatch qualification', async t => {
   const page = await pageFor(t, tokensSnapshot(), 'Europe/Moscow', { viewport: { width: 320, height: 900 } });
   const region = await tokensRegion(page);
